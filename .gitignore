@@ -1,0 +1,28 @@
+# macOS and local tools
+.DS_Store
+._*
+.claude/
+.local-server/
+.codex/
+.agents/
+.env
+.env.*
+!.env.example
+*.log
+__pycache__/
+*.py[cod]
+node_modules/
+
+# Reproducible distribution and local-only media
+/dist/
+/science-sheep-world.zip
+/science-sheep-world.zip.tmp
+/meadow/music/
+/meadow/voice/night/night.mp3
+/meadow/voice/night/night_补录.mp3
+/性能测试-*.png
+
+# Internal business and promotional drafts
+/星野-*.html
+/promo/
+/tools/文案时间轴（内部对照用）.html

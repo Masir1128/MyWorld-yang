@@ -1,0 +1,469 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>恐龙图鉴 · 科学羊的世界</title>
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<style>
+  :root{
+    --paper:#efe8da; --paper2:#f6f1e6; --ink:#2b2620; --sub:#6e6555; --dim:#9a907e; --line:#d9cfbb; --accent:#a8552d; --accent2:#3f6b55;
+    --serif:"Iowan Old Style","Palatino Linotype",Palatino,"Songti SC","STSong","Noto Serif SC",Georgia,serif;
+    --sans:"PingFang SC","Noto Sans SC","Microsoft YaHei",system-ui,-apple-system,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--paper);color:var(--ink);font-family:var(--sans)}
+  body{display:grid;grid-template-columns:210px 1fr 380px;grid-template-rows:auto 1fr;grid-template-areas:"side top card" "side stage card";height:100vh;overflow:hidden}
+  button{font:inherit;color:inherit;cursor:pointer}
+
+  /* 左栏 */
+  #side{grid-area:side;border-right:1px solid var(--line);padding:22px 16px;display:flex;flex-direction:column;gap:4px;overflow-y:auto;background:var(--paper2)}
+  #side .home{font-size:12.5px;color:var(--sub);text-decoration:none;margin-bottom:14px}
+  #side .brand{font-family:var(--serif);font-size:24px;line-height:1.15}
+  #side .vol{font-size:10.5px;letter-spacing:.25em;color:var(--dim);margin:4px 0 18px}
+  #side .grp{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;border:0;background:transparent;text-align:left;width:100%}
+  #side .grp:hover{background:rgba(0,0,0,.04)}
+  #side .grp.on{background:rgba(168,85,45,.1)}
+  #side .grp b{font-weight:500;font-size:14.5px;display:block}
+  #side .grp span{font-size:11px;color:var(--dim)}
+  #side .feat{margin-top:auto;border:1px solid var(--line);border-radius:10px;padding:12px;background:var(--paper)}
+  #side .feat .k{font-size:10px;letter-spacing:.25em;color:var(--dim)}
+  #side .feat .t{font-family:var(--serif);font-size:16px;margin:4px 0}
+  #side .feat p{margin:0;font-size:12px;line-height:1.6;color:var(--sub)}
+
+  /* 顶部：标本条 */
+  #top{grid-area:top;display:flex;align-items:center;gap:10px;padding:14px 18px 10px;overflow-x:auto;scrollbar-width:none}
+  #top::-webkit-scrollbar{display:none}
+  .spec{flex:none;width:122px;border:1px solid var(--line);border-radius:10px;background:var(--paper2);padding:6px 6px 8px;text-align:center}
+  .spec img{display:block;width:100%;height:70px;object-fit:contain}
+  .spec .n{font-family:var(--serif);font-size:13.5px;margin-top:2px}
+  .spec .l{font-size:10px;font-style:italic;color:var(--dim);font-family:var(--serif)}
+  .spec.on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
+  .spec .no{font-size:9.5px;color:var(--dim);text-align:left;letter-spacing:.1em}
+  #langBtn{flex:none;margin-left:auto;border:1px solid var(--line);background:var(--paper2);border-radius:999px;padding:6px 14px;font-size:13px}
+
+  /* 中间舞台 */
+  #stage{grid-area:stage;position:relative;min-height:0;overflow:hidden}
+  #cv{display:block;width:100%;height:100%;cursor:grab;touch-action:none}
+  #cv:active{cursor:grabbing}
+  #tools{position:absolute;left:16px;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;gap:8px}
+  #tools button{width:40px;height:40px;border-radius:10px;border:1px solid var(--line);background:var(--paper2);font-size:16px}
+  #tools button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+  #acts{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);display:flex;gap:6px;background:var(--paper2);border:1px solid var(--line);border-radius:999px;padding:4px}
+  #acts button{border:0;background:transparent;border-radius:999px;padding:7px 14px;font-size:13px;color:var(--sub);white-space:nowrap}
+  #acts button.on{background:var(--ink);color:var(--paper)}
+  #quote{position:absolute;left:50%;bottom:66px;transform:translateX(-50%);font-family:var(--serif);font-style:italic;color:var(--sub);font-size:15px;white-space:nowrap;pointer-events:none}
+  #hots{position:absolute;inset:0;pointer-events:none}
+  .hp{position:absolute;width:26px;height:26px;margin:-13px 0 0 -13px;border-radius:50%;background:rgba(255,255,255,.85);border:2px solid var(--accent);pointer-events:auto;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;color:var(--accent);box-shadow:0 2px 10px rgba(0,0,0,.18)}
+  .hp::after{content:"";position:absolute;inset:-7px;border-radius:50%;border:2px solid rgba(168,85,45,.45);animation:pulse 2s infinite}
+  .hp.on{background:var(--accent);color:#fff}
+  @keyframes pulse{0%{transform:scale(.7);opacity:1}100%{transform:scale(1.4);opacity:0}}
+  #bubble{position:absolute;max-width:300px;background:var(--paper2);border:1px solid var(--line);border-radius:12px;padding:12px 14px;box-shadow:0 10px 30px rgba(60,40,10,.18);font-size:13.5px;line-height:1.7;display:none;z-index:3}
+  #bubble b{display:block;font-family:var(--serif);font-size:17px;font-weight:400;margin-bottom:2px}
+  #bubble .x{position:absolute;right:10px;top:6px;cursor:pointer;color:var(--dim)}
+  #scaleNote{position:absolute;left:50%;top:14px;transform:translateX(-50%);background:var(--paper2);border:1px solid var(--line);border-radius:999px;padding:6px 14px;font-size:13px;display:none;white-space:nowrap}
+  #loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:var(--serif);font-style:italic;color:var(--sub);background:var(--paper);transition:opacity .6s;z-index:5}
+
+  /* 右侧展签 */
+  #card{grid-area:card;border-left:1px solid var(--line);overflow-y:auto;padding:24px 24px 40px;background:var(--paper2)}
+  #card .fam{font-size:10.5px;letter-spacing:.22em;color:var(--dim)}
+  #card h1{font-family:var(--serif);font-weight:400;font-size:42px;line-height:1.05;margin:8px 0 2px}
+  #card .lat{font-family:var(--serif);font-style:italic;color:var(--sub)}
+  #card .tags{display:flex;gap:6px;flex-wrap:wrap;margin:12px 0}
+  #card .tags span{font-size:11.5px;border:1px solid var(--line);border-radius:999px;padding:2px 10px;color:var(--sub)}
+  #card .lead{font-size:14.5px;line-height:1.85;margin:6px 0 14px}
+  #card h3{font-size:10.5px;letter-spacing:.22em;color:var(--dim);font-weight:500;margin:22px 0 8px;border-top:1px solid var(--line);padding-top:14px}
+  #card table{width:100%;border-collapse:collapse;font-size:13.5px}
+  #card td{padding:7px 0;border-bottom:1px dashed var(--line);vertical-align:top;line-height:1.55}
+  #card td:first-child{color:var(--dim);width:32%}
+  .tl{position:relative;height:40px;margin:6px 0 4px}
+  .tl .seg{position:absolute;top:10px;height:12px}
+  .tl .seg span{position:absolute;top:16px;left:0;font-size:10.5px;color:var(--sub);white-space:nowrap}
+  .tl .mark{position:absolute;top:2px;width:3px;height:28px;background:var(--accent);border-radius:2px}
+  .tl .mark i{position:absolute;top:-16px;left:50%;transform:translateX(-50%);font-style:normal;font-size:10.5px;color:var(--accent);white-space:nowrap}
+  .tl .now{position:absolute;right:0;top:-4px;font-size:10px;color:var(--dim)}
+  #card ul{padding-left:18px;margin:0} #card li{font-size:13.5px;line-height:1.75;margin:4px 0}
+  .detail{display:grid;grid-template-columns:30px 1fr;gap:10px;padding:10px;border:1px solid var(--line);border-radius:10px;margin:8px 0;cursor:pointer;background:var(--paper)}
+  .detail:hover,.detail.on{border-color:var(--accent)}
+  .detail .no{width:26px;height:26px;border-radius:50%;border:2px solid var(--accent);color:var(--accent);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600}
+  .detail b{font-family:var(--serif);font-weight:400;font-size:15.5px}
+  .detail p{margin:2px 0 0;font-size:12.5px;color:var(--sub);line-height:1.6;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .q button{display:block;width:100%;text-align:left;margin:6px 0;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--paper);font-size:14px}
+  .q button.ok{border-color:var(--accent2);background:rgba(63,107,85,.12)} .q button.no{border-color:#c0583c;background:rgba(192,88,60,.1)}
+  .q .ex{font-size:13px;color:var(--sub);line-height:1.7}
+  .credit{margin-top:26px;font-size:11px;color:var(--dim);line-height:1.6}
+
+  @media (max-width:980px){
+    html,body{height:auto;overflow:auto}
+    body{display:block}
+    #side{border:0;border-bottom:1px solid var(--line);padding:12px 14px;flex-direction:row;flex-wrap:wrap;align-items:center;gap:6px 10px}
+    #side .home{margin:0;width:100%} #side .brand{font-size:20px} #side .vol,#side .grp,#side .feat{display:none}
+    #top{padding:10px 12px}
+    #stage{height:56vh;min-height:330px}
+    #tools{left:10px} #tools button{width:36px;height:36px}
+    #quote{display:none}
+    #card{border:0;padding:20px 16px 40px}
+  }
+</style>
+<script>
+// 服务器上用本地 vendor；双击打开时用离线打包的引擎和模型（和草原共用）
+(function () {
+  var file = location.protocol === 'file:';
+  window.__FILE = file;
+  if (file) { document.write('<script src="../shared/offline-modules.js"><\/script><script src="local-models.js"><\/script>'); return; }
+  var el = document.createElement('script'); el.type = 'importmap';
+  el.textContent = JSON.stringify({ imports: { 'three': '../shared/vendor/three/three.module.js', 'three/addons/': '../shared/vendor/three/addons/' } });
+  document.currentScript.after(el);
+})();
+</script>
+<script src="dino-data.js"></script>
+</head>
+<body>
+<aside id="side">
+  <a class="home" id="homeLink" href="../index.html">← 科学羊的世界</a>
+  <div class="brand" id="brand">恐龙图鉴</div>
+  <div class="vol" id="vol">DINOSAUR ATLAS · VOL. I</div>
+  <div id="groups"></div>
+  <div class="feat"><div class="k" id="featK">本馆精选</div><div class="t" id="featT"></div><p id="featP"></p></div>
+</aside>
+<header id="top"><div id="specs" style="display:flex;gap:10px"></div><button id="langBtn">EN</button></header>
+<main id="stage">
+  <canvas id="cv"></canvas>
+  <div id="hots"></div>
+  <div id="bubble"></div>
+  <div id="scaleNote"></div>
+  <div id="tools"><button id="tSpin" class="on">⟳</button><button id="tScale">🧒</button><button id="tReset">⤢</button></div>
+  <div id="quote"></div>
+  <div id="acts"></div>
+  <div id="loading">正在把恐龙请进展厅……</div>
+</main>
+<section id="card"></section>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
+
+// ---------------------------------------------------------------- 语言
+const qs = new URLSearchParams(location.search);
+let lang = qs.get('lang'); try { lang = lang || localStorage.getItem('ssw-lang'); } catch (e) {}
+if (lang !== 'en' && lang !== 'zh') lang = /^zh/i.test(navigator.language || '') ? 'zh' : 'en';
+const UI = {
+  zh: { home: '← 科学羊的世界', brand: '恐龙图鉴', vol: 'DINOSAUR ATLAS · VOL. I', lang: 'EN', feat: '本馆精选', loading: '正在把恐龙请进展厅……',
+    acts: { Idle: '站着', Walk: '走', Run: '跑', Attack: '吼叫', Jump: '跳' }, spin: '自动旋转', scale: '比一比：和小朋友站在一起', reset: '回到正面',
+    stats: '标本数据', when: '它生活在什么时候', know: '你知道吗', detail: '近看细节', quiz: '小测验', now: '现在',
+    ago: m => `${m} 百万年前`, scaleNote: (d, k) => `🧒 1.3 米高的小朋友，和真实大小的${d}站在一起${k > 1 ? `——它有 ${k} 个小朋友那么长` : ''}`,
+    correct: '答对了！', retry: '再想想～ ', place: '发现地', found: '命名', specimens: n => `${n} 种`,
+    credit: '恐龙模型：Quaternius（CC0）。资料来自博物馆和科学论文的公开资料，数字是常用的估计值。', hotHint: '点橙色的圆点，近看细节' },
+  en: { home: '← Science Sheep’s World', brand: 'Dinosaur Atlas', vol: '恐龙图鉴 · VOL. I', lang: '中文', feat: 'FEATURED', loading: 'Bringing the dinosaurs in…',
+    acts: { Idle: 'Stand', Walk: 'Walk', Run: 'Run', Attack: 'Roar', Jump: 'Jump' }, spin: 'Auto-rotate', scale: 'Size it up next to a kid', reset: 'Reset view',
+    stats: 'SPECIMEN DATA', when: 'WHEN IT LIVED', know: 'DID YOU KNOW', detail: 'CLOSE-UP DETAILS', quiz: 'QUIZ', now: 'today',
+    ago: m => `${m} million years ago`, scaleNote: (d, k) => `🧒 A 1.3 m kid next to a life-size ${d}${k > 1 ? ` — it’s as long as ${k} kids` : ''}`,
+    correct: 'Correct! ', retry: 'Not quite — ', place: 'Found in', found: 'Named', specimens: n => `${n} species`,
+    credit: 'Dinosaur models: Quaternius (CC0). Facts from museum and scientific sources; numbers are common estimates.', hotHint: 'Tap the orange dots for a close-up' },
+};
+const t = () => UI[lang];
+const D = window.DINOS, byId = Object.fromEntries(D.map(d => [d.id, d]));
+const tx = d => d[lang];
+
+// ---------------------------------------------------------------- 渲染
+const stageEl = document.getElementById('stage'), cv = document.getElementById('cv');
+const renderer = new THREE.WebGLRenderer({ canvas: cv, antialias: true, alpha: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.0;
+renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+const scene = new THREE.Scene();
+scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environmentIntensity = 0.55;
+const camera = new THREE.PerspectiveCamera(30, 1, 0.05, 500);
+const controls = new OrbitControls(camera, cv);
+controls.enableDamping = true; controls.enablePan = false; controls.maxPolarAngle = Math.PI * 0.49; controls.autoRotate = true; controls.autoRotateSpeed = 0.6;
+const key = new THREE.DirectionalLight(0xfff2dc, 2.2); key.position.set(6, 10, 7); key.castShadow = true;
+key.shadow.mapSize.set(2048, 2048); key.shadow.bias = -0.0004; key.shadow.normalBias = 0.02; key.shadow.radius = 6;
+scene.add(key, key.target);
+const rim = new THREE.DirectionalLight(0xdfe8ff, 0.8); rim.position.set(-8, 5, -6); scene.add(rim);
+scene.add(new THREE.HemisphereLight(0xfff6e6, 0xb8a888, 0.35));
+// 地面：只接收影子，和纸张背景融为一体
+const ground = new THREE.Mesh(new THREE.CircleGeometry(60, 64), new THREE.ShadowMaterial({ opacity: 0.22 }));
+ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
+// 一圈淡淡的展台
+const disc = new THREE.Mesh(new THREE.RingGeometry(0.98, 1, 128), new THREE.MeshBasicMaterial({ color: 0x9a8a6e, transparent: true, opacity: 0.35 }));
+disc.rotation.x = -Math.PI / 2; disc.position.y = 0.002; scene.add(disc);
+
+// ---------------------------------------------------------------- 皮肤：在原来的纯色上加鳞片纹理、背深腹浅
+function skinify(mat, zRange) {
+  mat.roughness = 0.82; mat.metalness = 0.0; mat.flatShading = false;
+  mat.onBeforeCompile = sh => {
+    sh.uniforms.uYR = { value: zRange };
+    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vRest;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvRest = position;');
+    sh.fragmentShader = sh.fragmentShader.replace('#include <common>', `#include <common>
+      varying vec3 vRest; uniform vec2 uYR;
+      vec2 h2(vec2 p){ p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3))); return fract(sin(p) * 43758.5453); }
+      vec3 h3(vec3 p){ p = vec3(dot(p, vec3(127.1, 311.7, 74.7)), dot(p, vec3(269.5, 183.3, 246.1)), dot(p, vec3(113.5, 271.9, 124.6))); return fract(sin(p) * 43758.5453); }
+      float cells(vec3 p){ vec3 i = floor(p), f = fract(p); float d = 1.0;   // 立体的鳞片（3D Voronoi），从哪个方向看都是一块一块的
+        for(int z=-1;z<=1;z++) for(int y=-1;y<=1;y++) for(int x=-1;x<=1;x++){ vec3 g = vec3(x,y,z); d = min(d, length(g + h3(i+g) - f)); } return d; }
+      float vn(vec3 p){ vec3 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f); float n = dot(i, vec3(1.0, 57.0, 113.0));
+        return mix(mix(mix(fract(sin(n)*43758.5), fract(sin(n+1.0)*43758.5), f.x), mix(fract(sin(n+57.0)*43758.5), fract(sin(n+58.0)*43758.5), f.x), f.y),
+                   mix(mix(fract(sin(n+113.0)*43758.5), fract(sin(n+114.0)*43758.5), f.x), mix(fract(sin(n+170.0)*43758.5), fract(sin(n+171.0)*43758.5), f.x), f.y), f.z); }`)
+      .replace('#include <color_fragment>', `#include <color_fragment>
+      { vec3 P = vRest / max(uYR.y - uYR.x, 0.001);
+        float s = cells(P * 30.0); float sc = smoothstep(0.05, 0.55, s);            // 鳞片：中间亮、缝隙暗
+        float h = clamp((vRest.y - uYR.x) / (uYR.y - uYR.x), 0.0, 1.0);
+        float mott = vn(P * 9.0) * 0.6 + vn(P * 23.0) * 0.4;                                          // 斑驳的大色块
+        diffuseColor.rgb *= mix(0.78, 1.06, sc) * mix(0.82, 1.1, mott) * mix(1.12, 0.86, smoothstep(0.25, 0.85, h));   // 腹部浅、背部深
+      }`)
+      .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
+      roughnessFactor = clamp(roughnessFactor - 0.12 * (1.0 - smoothstep(0.05, 0.4, cells((vRest / max(uYR.y - uYR.x, 0.001)) * 30.0))), 0.4, 1.0);`);
+  };
+  mat.needsUpdate = true;
+}
+
+// ---------------------------------------------------------------- 模型
+const loader = new GLTFLoader();
+const models = {};   // id -> { root, mixer, actions, scale, size }
+function loadOne(d) {
+  return new Promise((res, rej) => {
+    const local = window.DINO_GLB && window.DINO_GLB[d.file];
+    const done = g => {
+      const root = g.scene;
+      // 换成平滑法线 + 皮肤质感
+      root.traverse(o => {
+        if (!o.isMesh) return;
+        o.castShadow = true; o.receiveShadow = true;
+        if (o.geometry.attributes.normal) { o.geometry.deleteAttribute('normal'); o.geometry = mergeVertices(o.geometry, 1e-4); o.geometry.computeVertexNormals(); }
+        o.geometry.computeBoundingBox();
+        const bb = o.geometry.boundingBox, mats = Array.isArray(o.material) ? o.material : [o.material];
+        mats.forEach(m => skinify(m, new THREE.Vector2(bb.min.y, bb.max.y)));
+        o.frustumCulled = false;
+      });
+      // 量一下：按真实体长缩放，脚踩在地上
+      const box = new THREE.Box3().setFromObject(root), sz = box.getSize(new THREE.Vector3());
+      const along = Math.max(sz.x, sz.z), s = d.len / along;
+      const holder = new THREE.Group(); holder.add(root); root.scale.setScalar(s);
+      const box2 = new THREE.Box3().setFromObject(holder); root.position.y -= box2.min.y;
+      root.position.x -= (box2.min.x + box2.max.x) / 2; root.position.z -= (box2.min.z + box2.max.z) / 2;
+      if (sz.z < sz.x) holder.rotation.y = 0; // 模型默认朝向保持不变
+      const mixer = new THREE.AnimationMixer(root), actions = {};
+      for (const c of g.animations) { const k = c.name.split('_').pop(); actions[k] = mixer.clipAction(c); }
+      const s2 = new THREE.Box3().setFromObject(holder).getSize(new THREE.Vector3());
+      models[d.id] = { holder, root, mixer, actions, size: s2 };
+      res();
+    };
+    if (local) {
+      const bin = Uint8Array.from(atob(local), c => c.charCodeAt(0)).buffer;
+      loader.parse(bin, '', done, rej);
+    } else loader.load('models/' + d.file, done, undefined, rej);
+  });
+}
+async function loadWithRetry(d) {   // 网络偶尔抽风：重试两次，还不行就先跳过这只
+  for (let i = 0; i < 3; i++) { try { await loadOne(d); return true; } catch (e) { console.warn('模型加载失败，重试', d.id, e); await new Promise(r => setTimeout(r, 600)); } }
+  return false;
+}
+
+// 孩子的剪影（1.3 米），比大小时站在恐龙旁边
+const kid = (() => {
+  const c = document.createElement('canvas'); c.width = 256; c.height = 512; const g = c.getContext('2d');
+  g.fillStyle = '#3b332a';
+  g.beginPath(); g.arc(128, 70, 46, 0, 7); g.fill();                         // 头
+  g.beginPath(); g.moveTo(80, 128); g.quadraticCurveTo(128, 112, 176, 128); g.lineTo(190, 300); g.lineTo(66, 300); g.closePath(); g.fill();   // 身体
+  g.fillRect(84, 290, 36, 210); g.fillRect(136, 290, 36, 210);              // 腿
+  g.save(); g.translate(78, 140); g.rotate(0.35); g.fillRect(-14, 0, 26, 150); g.restore();   // 手臂
+  g.save(); g.translate(178, 140); g.rotate(-0.35); g.fillRect(-12, 0, 26, 150); g.restore();
+  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(0.65, 1.3), new THREE.MeshBasicMaterial({ map: tex, transparent: true, side: THREE.DoubleSide, depthWrite: false }));
+  m.geometry.translate(0, 0.65, 0); m.visible = false; scene.add(m); return m;
+})();
+
+// ---------------------------------------------------------------- 展示一只
+let cur = null, act = 'Idle', scaleMode = false, hotOn = -1;
+const camGoal = { pos: null, tgt: null, t: 1 };
+function frameDino(instant) {
+  const m = models[cur.id], s = m.size, L = Math.max(s.x, s.z), H = s.y;
+  const r = Math.max(L * 1.02, H * 1.5) * (scaleMode ? 1.12 : 1);
+  const tgt = new THREE.Vector3(scaleMode ? -L * 0.06 : 0, H * 0.42, 0);
+  const side = m.size.z > m.size.x ? new THREE.Vector3(1.75, 0, 0.75) : new THREE.Vector3(0.75, 0, 1.75);   // 从侧面偏前一点看，整条身体都在画面里
+  const pos = new THREE.Vector3(side.x * r, H * 0.5 + r * 0.38, side.z * r).add(new THREE.Vector3(tgt.x, 0, 0));
+  flyTo(pos, tgt, instant);
+  controls.minDistance = L * 0.35; controls.maxDistance = L * 4;
+  disc.scale.setScalar(L * 0.58); ground.scale.setScalar(Math.max(1, L / 10));
+  key.shadow.camera.left = key.shadow.camera.bottom = -L; key.shadow.camera.right = key.shadow.camera.top = L; key.shadow.camera.far = L * 6;
+  key.position.set(L * 0.5, L * 0.9, L * 0.6); key.shadow.camera.updateProjectionMatrix();
+}
+function flyTo(pos, tgt, instant) {
+  if (instant) { camera.position.copy(pos); controls.target.copy(tgt); camGoal.t = 1; controls.update(); return; }
+  camGoal.p0 = camera.position.clone(); camGoal.t0 = controls.target.clone(); camGoal.pos = pos; camGoal.tgt = tgt; camGoal.t = 0;
+}
+function show(id, instant = false) {
+  if (cur) scene.remove(models[cur.id].holder);
+  cur = byId[id] || D[0];
+  const m = models[cur.id]; scene.add(m.holder);
+  hotOn = -1; document.getElementById('bubble').style.display = 'none';
+  play(cur.idle, true);
+  placeKid(); frameDino(instant);
+  renderAll();
+  history.replaceState(null, '', `?d=${cur.id}&lang=${lang}`);
+}
+function play(name, loop = true) {
+  const m = models[cur.id];
+  const a = m.actions[name]; if (!a) return;
+  for (const k in m.actions) if (m.actions[k] !== a) m.actions[k].fadeOut(0.35);
+  a.reset().setLoop(loop ? THREE.LoopRepeat : THREE.LoopOnce, Infinity); a.clampWhenFinished = !loop; a.fadeIn(0.35).play();
+  act = name;
+  if (!loop) { const back = e => { if (e.action === a) { m.mixer.removeEventListener('finished', back); play(cur.idle); renderActs(); } }; m.mixer.addEventListener('finished', back); }
+  renderActs();
+}
+function placeKid() {
+  const s = models[cur.id].size;
+  kid.visible = scaleMode;
+  // 站在恐龙身体的一侧、离镜头远的那边一点，正好和它比身高
+  const alongZ = s.z > s.x, L = Math.max(s.x, s.z), W = Math.min(s.x, s.z);
+  // 站在恐龙靠镜头这一侧、偏尾巴一点的地上，不会被身体挡住，也不挡住恐龙
+  // 小恐龙（比如伶盗龙）镜头离得近，小朋友站到它后面；大恐龙就站在靠镜头这一侧、偏尾巴的地上
+  const sgn = L < 4 ? -1 : 1, lat = sgn * (W / 2 + (L < 4 ? 0.5 : 1.1)), lon = L < 4 ? -L * 0.1 : L * 0.28;
+  if (alongZ) kid.position.set(lat, 0, lon); else kid.position.set(lon, 0, lat);
+  const note = document.getElementById('scaleNote');
+  note.style.display = scaleMode ? 'block' : 'none';
+  note.textContent = t().scaleNote(tx(cur).short, Math.round(cur.len / 1.3));
+}
+
+// ---------------------------------------------------------------- 文字界面
+function renderSide() {
+  const T = t(); document.getElementById('homeLink').textContent = T.home; document.getElementById('homeLink').href = `../index.html?lang=${lang}`;
+  document.getElementById('brand').textContent = T.brand; document.getElementById('vol').textContent = T.vol;
+  document.getElementById('featK').textContent = T.feat;
+  const f = byId.triceratops; document.getElementById('featT').textContent = tx(f).name; document.getElementById('featP').textContent = tx(f).lead.split(/(?<=[。.])/)[0];
+  const gEl = document.getElementById('groups'); gEl.innerHTML = '';
+  for (const [k, g] of Object.entries(window.DINO_GROUPS)) {
+    const n = D.filter(d => d.group === k).length;
+    const b = document.createElement('button'); b.className = 'grp' + (cur && cur.group === k ? ' on' : '');
+    b.innerHTML = `<div><b>${g[lang]}</b><span>${lang === 'zh' ? g.zhNote : g.enNote} · ${T.specimens(n)}</span></div>`;
+    b.onclick = () => show(D.find(d => d.group === k).id);
+    gEl.appendChild(b);
+  }
+  document.getElementById('langBtn').textContent = T.lang;
+  document.getElementById('tSpin').title = T.spin; document.getElementById('tScale').title = T.scale; document.getElementById('tReset').title = T.reset;
+  document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
+  document.title = lang === 'zh' ? '恐龙图鉴 · 科学羊的世界' : 'Dinosaur Atlas · Science Sheep’s World';
+}
+const thumbs = {};
+function renderSpecs() {
+  const el = document.getElementById('specs');
+  el.innerHTML = D.map((d, i) => `<button class="spec${cur && cur.id === d.id ? ' on' : ''}" data-id="${d.id}"><div class="no">${String(i + 1).padStart(2, '0')}</div><img src="${thumbs[d.id] || ''}" alt=""><div class="n">${tx(d).name}</div><div class="l">${d.latin.split(' ')[0]}</div></button>`).join('');
+  el.querySelectorAll('.spec').forEach(b => b.onclick = () => show(b.dataset.id));
+}
+function renderActs() {
+  const el = document.getElementById('acts'), T = t();
+  el.innerHTML = ['Idle', 'Walk', 'Run', 'Attack', 'Jump'].map(a => `<button data-a="${a}" class="${act === a ? 'on' : ''}">${T.acts[a]}</button>`).join('');
+  el.querySelectorAll('button').forEach(b => b.onclick = () => { const a = b.dataset.a; play(a, a !== 'Attack' && a !== 'Jump'); });
+}
+function timeline(d) {
+  const T = t(), P = window.DINO_PERIODS, max = 252, W = x => (1 - x / max) * 100;
+  const segs = P.map(p => `<div class="seg" style="left:${W(p.from)}%;width:${W(p.to) - W(p.from)}%;background:${p.c}"><span>${p[lang]}</span></div>`).join('');
+  const mid = (d.lived[0] + d.lived[1]) / 2;
+  return `<div class="tl">${segs}<div class="seg" style="left:${W(66)}%;width:${100 - W(66)}%;background:#e2dccd"></div><div class="mark" style="left:${W(mid)}%"><i>${T.ago(Math.round(mid))}</i></div><div class="now">${T.now} →</div></div>`;
+}
+function renderCard() {
+  const d = cur, x = tx(d), T = t(), g = window.DINO_GROUPS[d.group];
+  const el = document.getElementById('card');
+  el.innerHTML = `<div class="fam">${g[lang].toUpperCase()} · ${lang === 'zh' ? '标本' : 'SPECIMEN'} DA-${String(D.indexOf(d) + 1).padStart(3, '0')}</div>
+    <h1>${x.name}</h1><div class="lat">${d.latin}</div>
+    <div class="tags"><span>${x.diet}</span><span>${window.DINO_PERIODS.find(p => d.lived[0] <= p.from && d.lived[0] > p.to)[lang]}</span><span>${x.place}</span></div>
+    <p class="lead">${x.lead}</p>
+    <h3>${T.stats}</h3><table>${x.stats.map(([a, b]) => `<tr><td>${a}</td><td>${b}</td></tr>`).join('')}<tr><td>${T.found}</td><td>${x.found}</td></tr></table>
+    <h3>${T.when}</h3>${timeline(d)}
+    <h3>${T.detail}</h3>${x.hot.map((h, i) => `<div class="detail${i === hotOn ? ' on' : ''}" data-i="${i}"><div class="no">${i + 1}</div><div><b>${h[lang][0]}</b><p>${h[lang][1]}</p></div></div>`).join('')}
+    <h3>${T.know}</h3><ul>${x.facts.map(f => `<li>${f}</li>`).join('')}</ul>
+    <h3>${T.quiz}</h3><div class="q"><p style="font-size:14.5px">${x.quiz[0]}</p>${x.quiz[1].map((o, i) => `<button data-a="${i}">${o}</button>`).join('')}<p class="ex" id="qx"></p></div>
+    <div class="credit">${T.credit}</div>`;
+  el.querySelectorAll('.detail').forEach(b => b.onclick = () => focusHot(+b.dataset.i));
+  el.querySelectorAll('.q button').forEach(b => b.onclick = () => {
+    const ans = x.quiz[2], i = +b.dataset.a;
+    el.querySelectorAll('.q button').forEach((y, j) => { y.classList.toggle('ok', j === ans); y.classList.toggle('no', j === i && i !== ans); });
+    document.getElementById('qx').textContent = (i === ans ? T.correct : T.retry) + x.quiz[3];
+  });
+  document.getElementById('quote').textContent = `“${x.hot[0][lang][0]}” — ${T.hotHint}`;
+}
+function renderAll() { renderSide(); renderSpecs(); renderActs(); renderCard(); placeKid(); }
+
+// ---------------------------------------------------------------- 近看细节：圆点挂在骨骼上
+const hotsEl = document.getElementById('hots'), bubble = document.getElementById('bubble'), _v = new THREE.Vector3();
+function boneOf(name) { let b = null; models[cur.id].root.traverse(o => { if (!b && o.isBone && o.name === name) b = o; }); return b; }
+function focusHot(i) {
+  hotOn = i; const h = tx(cur).hot[i], bone = boneOf(h.bone); if (!bone) return;
+  controls.autoRotate = false; document.getElementById('tSpin').classList.remove('on');
+  const p = bone.getWorldPosition(new THREE.Vector3()), L = Math.max(models[cur.id].size.x, models[cur.id].size.z);
+  const dir = camera.position.clone().sub(controls.target).normalize();
+  flyTo(p.clone().addScaledVector(dir, L * 0.55).add(new THREE.Vector3(0, L * 0.08, 0)), p, false);
+  bubble.innerHTML = `<span class="x">✕</span><b>${h[lang][0]}</b>${h[lang][1]}`; bubble.style.display = 'block';
+  bubble.querySelector('.x').onclick = () => { bubble.style.display = 'none'; hotOn = -1; frameDino(); renderCard(); };
+  renderCard();
+}
+function updateHots() {
+  if (!cur) return;
+  const hs = tx(cur).hot, W = stageEl.clientWidth, H = stageEl.clientHeight;
+  if (hotsEl.children.length !== hs.length || hotsEl.dataset.id !== cur.id) {
+    hotsEl.dataset.id = cur.id;
+    hotsEl.innerHTML = hs.map((h, i) => `<div class="hp" data-i="${i}">${i + 1}</div>`).join('');
+    hotsEl.querySelectorAll('.hp').forEach(e => e.onclick = () => focusHot(+e.dataset.i));
+  }
+  hs.forEach((h, i) => {
+    const bone = boneOf(h.bone), e = hotsEl.children[i]; if (!bone) { e.style.display = 'none'; return; }
+    bone.getWorldPosition(_v).project(camera);
+    const x = (_v.x * 0.5 + 0.5) * W, y = (-_v.y * 0.5 + 0.5) * H;
+    e.style.display = _v.z < 1 ? 'flex' : 'none'; e.style.left = x + 'px'; e.style.top = y + 'px'; e.classList.toggle('on', i === hotOn);
+    if (i === hotOn) { bubble.style.left = Math.min(W - 320, x + 24) + 'px'; bubble.style.top = Math.max(10, Math.min(H - 180, y - 40)) + 'px'; }
+  });
+}
+
+// ---------------------------------------------------------------- 按钮
+document.getElementById('langBtn').onclick = () => { lang = lang === 'zh' ? 'en' : 'zh'; try { localStorage.setItem('ssw-lang', lang); } catch (e) {} hotsEl.innerHTML = ''; bubble.style.display = 'none'; hotOn = -1; renderAll(); history.replaceState(null, '', `?d=${cur.id}&lang=${lang}`); };
+document.getElementById('tSpin').onclick = e => { controls.autoRotate = !controls.autoRotate; e.currentTarget.classList.toggle('on', controls.autoRotate); };
+document.getElementById('tScale').onclick = e => { scaleMode = !scaleMode; e.currentTarget.classList.toggle('on', scaleMode); placeKid(); frameDino(); };
+document.getElementById('tReset').onclick = () => { hotOn = -1; bubble.style.display = 'none'; frameDino(); renderCard(); };
+controls.addEventListener('start', () => { camGoal.t = 1; });
+
+// ---------------------------------------------------------------- 尺寸、动画
+function resize() { const w = stageEl.clientWidth, h = stageEl.clientHeight; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); }
+new ResizeObserver(resize).observe(stageEl);
+const clock = new THREE.Clock();
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(0.05, clock.getDelta());
+  if (!cur) return;
+  models[cur.id].mixer.update(dt);
+  if (camGoal.t < 1) {
+    camGoal.t = Math.min(1, camGoal.t + dt / 1.1); const e = 1 - Math.pow(1 - camGoal.t, 3);
+    camera.position.lerpVectors(camGoal.p0, camGoal.pos, e); controls.target.lerpVectors(camGoal.t0, camGoal.tgt, e);
+  }
+  if (kid.visible) kid.lookAt(camera.position.x, 0, camera.position.z);
+  controls.update(); updateHots();
+  renderer.render(scene, camera);
+});
+
+// ---------------------------------------------------------------- 开始：全部加载，顺便拍好顶部的缩略图
+(async () => {
+  resize();
+  const ok = await Promise.all(D.map(loadWithRetry));
+  for (let i = D.length - 1; i >= 0; i--) if (!ok[i]) { delete byId[D[i].id]; D.splice(i, 1); }
+  // 缩略图：每只摆好拍一张
+  const tw = 240, th = 140, sw = stageEl.clientWidth, sh = stageEl.clientHeight;
+  renderer.setSize(tw, th, false); camera.aspect = tw / th; camera.updateProjectionMatrix();
+  ground.visible = disc.visible = false;
+  for (const d of D) {
+    const m = models[d.id]; scene.add(m.holder); m.actions.Idle && m.actions.Idle.play(); m.mixer.update(0.5);
+    const s = m.size, L = Math.max(s.x, s.z);
+    camera.position.set(L * 0.95, s.y * 0.5 + L * 0.1, L * 1.25); camera.lookAt(0, s.y * 0.45, 0);
+    renderer.render(scene, camera); thumbs[d.id] = cv.toDataURL('image/png');
+    m.actions.Idle && m.actions.Idle.stop(); scene.remove(m.holder);
+  }
+  ground.visible = disc.visible = true;
+  renderer.setSize(sw, sh, false); resize();
+  show(byId[qs.get('d')] ? qs.get('d') : byId.triceratops ? 'triceratops' : D[0].id, true);
+  const l = document.getElementById('loading'); l.style.opacity = 0; setTimeout(() => l.remove(), 700);
+})();
+window.dino = { show, play, models, camera, controls, get cur() { return cur; } };
+</script>
+</body>
+</html>

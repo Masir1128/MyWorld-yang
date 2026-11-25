@@ -1,0 +1,1358 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>实时海岸模拟</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#0b1622;font-family:system-ui,-apple-system,"PingFang SC",sans-serif}
+  canvas{display:block}
+  #hud{position:fixed;left:16px;top:14px;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.55);pointer-events:none;user-select:none}
+  #hud h1{font-size:15px;margin:0 0 4px;font-weight:600;letter-spacing:.04em}
+  #hud div{font-size:12px;opacity:.85;font-variant-numeric:tabular-nums;line-height:1.5}
+  #loading{position:fixed;inset:0;display:grid;place-items:center;color:#cfe3f0;font-size:14px;background:#0b1622;transition:opacity .6s;z-index:10}
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/",
+    "lil-gui": "https://cdn.jsdelivr.net/npm/lil-gui@0.20.0/dist/lil-gui.esm.min.js"
+  }
+}
+</script>
+</head>
+<body>
+<div id="loading">正在生成海岸地形…</div>
+<div id="hud"><h1>实时海岸模拟</h1><div id="stats"></div><div id="hint"></div></div>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { Sky } from 'three/addons/objects/Sky.js';
+import GUI from 'lil-gui';
+
+// ---------------------------------------------------------------------------
+// 地形（CPU 端）
+// ---------------------------------------------------------------------------
+const smoothstep = (a, b, x) => { const t = Math.min(Math.max((x - a) / (b - a), 0), 1); return t * t * (3 - 2 * t); };
+function hash2(ix, iz) {
+  let h = (Math.imul(ix, 374761393) + Math.imul(iz, 668265263)) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  h ^= h >>> 16;
+  return (h >>> 0) / 4294967296;
+}
+function vnoise(x, z) {
+  const ix = Math.floor(x), iz = Math.floor(z);
+  const fx = x - ix, fz = z - iz;
+  const ux = fx * fx * (3 - 2 * fx), uz = fz * fz * (3 - 2 * fz);
+  const a = hash2(ix, iz), b = hash2(ix + 1, iz), c = hash2(ix, iz + 1), d = hash2(ix + 1, iz + 1);
+  return a + (b - a) * ux + (c - a) * uz + (a - b - c + d) * ux * uz;
+}
+function fbm(x, z, oct = 4) {
+  let v = 0, a = 0.5;
+  for (let i = 0; i < oct; i++) { v += a * vnoise(x, z); x = x * 2.03 + 17.1; z = z * 2.03 + 3.7; a *= 0.5; }
+  return v / (1 - Math.pow(0.5, oct));
+}
+const shoreZ = x => 18 * Math.sin(x * 0.013) + 8 * Math.sin(x * 0.037 + 1.3);
+
+function terrainH(x, z) {
+  const s = z - shoreZ(x); // >0 向海
+  let h;
+  if (s >= 0) {
+    h = -s * 0.045;
+    if (s > 90) h -= (s - 90) * 0.09;
+    h = Math.max(h, -26);
+    h += 0.9 * Math.exp(-((s - 48) ** 2) / 140) * (0.6 + 0.8 * vnoise(x * 0.01, 3.3)); // 沙坝
+  } else {
+    const l = -s;
+    h = l * 0.045;
+    h += smoothstep(12, 45, l) * (2.0 + 5 * fbm(x * 0.025, z * 0.03, 4));           // 沙丘
+    h += Math.max(0, l - 60) * 0.11 * (0.5 + 0.9 * fbm(x * 0.006, z * 0.006, 3));  // 内陆丘陵
+  }
+  h += (fbm(x * 0.05, z * 0.05, 3) - 0.5) * 0.45;
+
+  // 东侧岩石岬角
+  const hx = (x - 190) / (48 + 14 * vnoise(z * 0.02, 7.7));
+  const cliff = Math.exp(-hx * hx) * (1 - smoothstep(-10, 80, s)) * smoothstep(-160, -50, s);
+  if (cliff > 0.01) h += smoothstep(0.22, 0.55, cliff) * (8 + 20 * fbm(x * 0.035, z * 0.035, 5));
+  // 西侧礁石
+  const rx = (x + 170) / 20;
+  const reef = Math.exp(-rx * rx) * (1 - smoothstep(-5, 38, s)) * smoothstep(-40, -12, s);
+  if (reef > 0.01) h += smoothstep(0.25, 0.7, reef) * (2 + 5 * fbm(x * 0.06, z * 0.06, 4));
+  return h;
+}
+
+// ---------------------------------------------------------------------------
+// 渲染器 / 场景
+// ---------------------------------------------------------------------------
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 0.45;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.3, 30000);
+camera.position.set(40, 7, -28);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(-10, 1, 45);
+controls.enableDamping = true;
+controls.maxPolarAngle = Math.PI * 0.495;
+controls.maxDistance = 1500;
+
+// 天空 → 立方体贴图（用于背景、反射、环境光、雾色）
+const skyScene = new THREE.Scene();
+const sky = new Sky();
+sky.scale.setScalar(10000);
+skyScene.add(sky);
+sky.material.uniforms.turbidity.value = 3.2;
+sky.material.uniforms.rayleigh.value = 1.4;
+sky.material.uniforms.mieCoefficient.value = 0.005;
+sky.material.uniforms.mieDirectionalG.value = 0.86;
+// 夜间压暗 Sky 着色器自带的恒定底光（L0 = 0.1），否则夜空发灰
+sky.material.uniforms.uSkyDim = { value: 1 };
+sky.material.fragmentShader = 'uniform float uSkyDim;\n' + sky.material.fragmentShader
+  .replace('gl_FragColor = vec4( retColor, 1.0 );', 'gl_FragColor = vec4( retColor * uSkyDim, 1.0 );');
+const cubeRT = new THREE.WebGLCubeRenderTarget(256, {
+  type: THREE.HalfFloatType, generateMipmaps: true, minFilter: THREE.LinearMipmapLinearFilter,
+});
+const cubeCam = new THREE.CubeCamera(1, 20000, cubeRT);
+scene.background = cubeRT.texture;
+
+// ---------------------------------------------------------------------------
+// 高度图（GPU 端采样，用于水深、碎浪、泡沫）
+// ---------------------------------------------------------------------------
+const RECT = { x: -500, z: -80, w: 1000, h: 700 };
+const HW = 1024, HH = 717;
+const heightData = new Float32Array(HW * HH);
+function buildHeightTexture() {
+  for (let j = 0; j < HH; j++) {
+    const z = RECT.z + (j + 0.5) / HH * RECT.h;
+    for (let i = 0; i < HW; i++) heightData[j * HW + i] = terrainH(RECT.x + (i + 0.5) / HW * RECT.w, z);
+  }
+  const t = new THREE.DataTexture(heightData, HW, HH, THREE.RedFormat, THREE.FloatType);
+  t.minFilter = t.magFilter = THREE.LinearFilter;
+  t.generateMipmaps = false;
+  t.needsUpdate = true;
+  return t;
+}
+
+// ---------------------------------------------------------------------------
+// 共享 uniforms 与 GLSL
+// ---------------------------------------------------------------------------
+const U = {
+  uTime: { value: 0 },
+  uLevel: { value: 0 },
+  uWaveAmp: { value: 1 },
+  uWaveDir: { value: 0 },
+  uFoam: { value: 1 },
+  uSunDir: { value: new THREE.Vector3(0, 1, 0) },
+  uSunColor: { value: new THREE.Color(1, 1, 1) },
+  uMoonDir: { value: new THREE.Vector3(0, 1, 0) },
+  uMoonColor: { value: new THREE.Color(0, 0, 0) },
+  uEnv: { value: cubeRT.texture },
+  uUnder: { value: 0 },
+  uCamDepth: { value: 0 },
+  uBio: { value: 0 },
+  uLampPos: { value: new THREE.Vector3(0, -100, 0) },
+  uLampColor: { value: new THREE.Color(0, 0, 0) },
+  uFogDensity: { value: 0.0006 },
+  uHeight: { value: null },
+  uRect: { value: new THREE.Vector4(RECT.x, RECT.z, RECT.w, RECT.h) },
+};
+
+const GLSL_COMMON = /* glsl */`
+uniform float uTime, uLevel, uWaveAmp, uWaveDir, uFoam, uFogDensity, uUnder, uCamDepth, uBio;
+uniform vec3 uSunDir, uSunColor, uMoonDir, uMoonColor, uLampPos, uLampColor;
+uniform samplerCube uEnv;
+uniform sampler2D uHeight;
+uniform vec4 uRect;
+
+float hash(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
+float vnoise(vec2 p){
+  vec2 i = floor(p), f = fract(p); vec2 u = f*f*(3.0-2.0*f);
+  return mix(mix(hash(i), hash(i+vec2(1,0)), u.x), mix(hash(i+vec2(0,1)), hash(i+vec2(1,1)), u.x), u.y);
+}
+float fbm(vec2 p){ float v=0.0, a=0.5; for(int i=0;i<4;i++){ v+=a*vnoise(p); p=p*2.03+vec2(1.7,9.2); a*=0.5; } return v/0.9375; }
+
+float terrainH(vec2 p){ return textureLod(uHeight, (p - uRect.xy) / uRect.zw, 0.0).r; }
+float shoreZ(float x){ return 18.0*sin(x*0.013) + 8.0*sin(x*0.037+1.3); }
+float rectEdge(vec2 p){
+  vec2 a = p - uRect.xy, b = uRect.xy + uRect.zw - p;
+  return smoothstep(0.0, 70.0, min(min(a.x, b.x), b.y));
+}
+
+vec4 waveParam(int i){ // 波长, 陡度, 方向偏移
+  if(i==0) return vec4(62.0, 0.17,  0.00, 0.0);
+  if(i==1) return vec4(33.0, 0.15,  0.35, 0.0);
+  if(i==2) return vec4(19.0, 0.13, -0.45, 0.0);
+  if(i==3) return vec4(11.0, 0.11,  0.80, 0.0);
+  if(i==4) return vec4( 6.5, 0.09, -1.00, 0.0);
+  return        vec4( 4.0, 0.07,  1.30, 0.0);
+}
+// Gerstner 波叠加：返回位移，并输出切线/副切线
+vec3 gerstner(vec2 p, float m, out vec3 T, out vec3 B){
+  vec3 disp = vec3(0.0); T = vec3(1,0,0); B = vec3(0,0,1);
+  float Q = 1.0 / max(uWaveAmp, 1.0);
+  for(int i=0;i<6;i++){
+    vec4 w = waveParam(i);
+    float k = 6.28318 / w.x;
+    float a = w.y / k * uWaveAmp * m;
+    float th = uWaveDir + w.z;
+    vec2 d = vec2(sin(th), -cos(th));
+    float f = k * (dot(d, p) - sqrt(9.8 / k) * uTime);
+    float cf = cos(f), sf = sin(f), s = k * a;
+    disp += vec3(d.x*a*cf*Q, a*sf, d.y*a*cf*Q);
+    T += vec3(-d.x*d.x*s*sf*Q, d.x*s*cf, -d.x*d.y*s*sf*Q);
+    B += vec3(-d.x*d.y*s*sf*Q, d.y*s*cf, -d.y*d.y*s*sf*Q);
+  }
+  return disp;
+}
+float gerstnerMask(float d){ return smoothstep(0.6, 2.5 + 3.0*uWaveAmp, d); }
+
+// 近岸碎浪（涌潮 bore）+ 上冲/回流：x = 高度, y = 泡沫量
+vec2 surf(vec2 p, float d){
+  float amp = uWaveAmp;
+  float s = p.y - shoreZ(p.x);
+  float inZone = 1.0 - smoothstep(2.0*amp + 0.8, 3.5*amp + 1.6, d);
+  float onBeach = smoothstep(-1.1*amp - 0.25, 0.2, d);
+  float zone = inZone * onBeach;
+  float ph = s*0.11 + uTime*0.72 + vnoise(vec2(p.x*0.008, 3.1))*5.0 + sin(p.x*0.004)*2.0;
+  float cyc = ph / 6.28318;
+  float u = fract(cyc);
+  float setAmp = 0.55 + 0.6 * hash(vec2(floor(cyc), 7.0));
+  float front = smoothstep(0.0, 0.045, u);
+  float b = pow(1.0 - u, 2.3) * front;
+  float A = amp * 0.75 * zone * mix(0.85, 1.0, smoothstep(-0.5, 2.0, d)) * setAmp;
+  float foam = zone * setAmp * (pow(1.0 - u, 3.0) * front * 1.1 + 0.04);
+  return vec2(A * b, foam);
+}
+
+// 水下散射颜色：上亮下暗 + 以折射太阳为中心的放射状光柱
+vec3 uwFog(vec3 dir){
+  vec3 amb = textureLod(uEnv, vec3(0.0, 1.0, 0.0), 6.0).rgb;
+  vec3 light = uSunColor * max(uSunDir.y, 0.0) * 0.6 + uMoonColor * max(uMoonDir.y, 0.0) * 0.9 + amb * 0.6;
+  vec3 base = vec3(0.010, 0.070, 0.085) * light * mix(0.3, 1.5, smoothstep(-0.7, 0.8, dir.y));
+  vec3 toS = -refract(-uSunDir, vec3(0.0, 1.0, 0.0), 1.0 / 1.333);
+  if(dot(toS, toS) < 0.01) toS = vec3(0.0, 1.0, 0.0);
+  toS = normalize(toS);
+  float lobe = pow(max(dot(dir, toS), 0.0), 3.0);
+  vec3 b1 = normalize(cross(toS, vec3(0.0, 0.0, 1.0))), b2 = cross(toS, b1);
+  vec3 q = dir - toS * dot(dir, toS);
+  vec2 ang = vec2(dot(q, b1), dot(q, b2)) / (length(q) + 1e-4);
+  float rays = smoothstep(0.45, 0.85, fbm(ang * 2.5 + vec2(uTime * 0.12, -uTime * 0.08)));
+  base += vec3(0.25, 0.6, 0.6) * uSunColor * lobe * (0.12 + rays * 0.7) * 0.22 * max(uSunDir.y, 0.0);
+  base += vec3(0.4, 0.6, 0.85) * uMoonColor * lobe * (0.1 + rays * 0.5) * 0.35;
+  return base * exp(-uCamDepth * 0.06);
+}
+vec3 envFog(vec3 col, vec3 wp){
+  vec3 dv = wp - cameraPosition; float dist = length(dv); vec3 dir = dv / dist;
+  if(uUnder > 0.5) return mix(col, uwFog(dir), 1.0 - exp(-dist * 0.05));
+  vec3 fc = textureLod(uEnv, normalize(vec3(dir.x, max(dir.y, 0.0)*0.4 + 0.02, dir.z)), 2.0).rgb;
+  float f = 1.0 - exp(-pow(dist * uFogDensity, 1.25));
+  return mix(col, fc, f);
+}
+`;
+
+// ---------------------------------------------------------------------------
+// 地形 / 岩石材质
+// ---------------------------------------------------------------------------
+function makeGroundMaterial(isRock) {
+  return new THREE.ShaderMaterial({
+    uniforms: { ...U, uRock: { value: isRock ? 1 : 0 } },
+    vertexShader: /* glsl */`
+      varying vec3 vWorld; varying vec3 vN;
+      void main(){
+        mat4 m = modelMatrix;
+        #ifdef USE_INSTANCING
+          m = modelMatrix * instanceMatrix;
+        #endif
+        vec4 wp = m * vec4(position, 1.0);
+        vWorld = wp.xyz;
+        vN = normalize(mat3(m) * normal);
+        gl_Position = projectionMatrix * viewMatrix * wp;
+      }`,
+    fragmentShader: GLSL_COMMON + /* glsl */`
+      uniform float uRock;
+      varying vec3 vWorld; varying vec3 vN;
+      float caustic(vec2 uv, float t){
+        vec2 p = mod(uv*6.28318, 6.28318) - 250.0; vec2 i = p; float c = 1.0; float inten = 0.005;
+        for(int n=0;n<4;n++){
+          float tt = t * (1.0 - (3.5 / float(n+1)));
+          i = p + vec2(cos(tt - i.x) + sin(tt + i.y), sin(tt - i.y) + cos(tt + i.x));
+          c += 1.0 / length(vec2(p.x / (sin(i.x + tt) / inten), p.y / (cos(i.y + tt) / inten)));
+        }
+        c /= 4.0; c = 1.17 - pow(c, 1.4);
+        return pow(abs(c), 8.0);
+      }
+      void main(){
+        vec3 N = normalize(vN);
+        vec2 p = vWorld.xz; float h = vWorld.y;
+        float n1 = fbm(p*0.06), n2 = vnoise(p*0.8), n3 = vnoise(p*4.0);
+        float slope = 1.0 - N.y;
+
+        vec3 dry = vec3(0.80, 0.70, 0.52) * (0.86 + 0.22*n1 + 0.06*n3);
+        vec3 wet = vec3(0.40, 0.33, 0.24) * (0.9 + 0.15*n2);
+        vec3 grass = mix(vec3(0.20, 0.28, 0.10), vec3(0.46, 0.44, 0.22), n1);
+        vec3 rock = mix(vec3(0.16, 0.15, 0.14), vec3(0.36, 0.33, 0.29), fbm(p*0.15 + h*0.2)) * (0.8 + 0.35*n3);
+
+        float runup = uWaveAmp*0.7 + 0.2;
+        float wetness = 1.0 - smoothstep(uLevel + runup*0.45, uLevel + runup + 0.25, h + (n2-0.5)*0.15);
+        vec3 col = mix(dry, wet, wetness);
+        float grassMask = smoothstep(2.6, 4.6, h + (n1-0.5)*3.0) * smoothstep(0.32, 0.18, slope);
+        col = mix(col, grass, grassMask);
+        float rockMask = uRock > 0.5 ? 1.0 : smoothstep(0.16, 0.3, slope + (n2-0.5)*0.12) * smoothstep(uLevel - 3.0, uLevel + 0.5, h);
+        col = mix(col, mix(rock, rock*0.45, wetness), rockMask);
+        // 海藻痕：岩石潮间带偏绿
+        col = mix(col, vec3(0.12,0.16,0.08), rockMask * wetness * smoothstep(0.4, 0.7, n2) * 0.6);
+
+        float ndl = max(dot(N, uSunDir), 0.0);
+        vec3 amb = textureLod(uEnv, N, 6.0).rgb;
+        float ndm = max(dot(N, uMoonDir), 0.0);
+        vec3 Lv = uLampPos - vWorld; float l2 = dot(Lv, Lv);
+        vec3 lampT = uLampColor * max(dot(N, Lv * inversesqrt(l2)), 0.0) * 6.0 / (1.0 + l2);
+        vec3 lit = col * (uSunColor * ndl + uMoonColor * ndm + amb * 0.55 + lampT);
+        vec3 V = normalize(cameraPosition - vWorld);
+        vec3 H = normalize(V + uSunDir);
+        lit += uSunColor * pow(max(dot(N, H), 0.0), 80.0) * 0.6 * wetness * (1.0 - grassMask);
+        lit += uMoonColor * pow(max(dot(N, normalize(V + uMoonDir)), 0.0), 80.0) * 0.8 * wetness * (1.0 - grassMask);
+
+        float uw = uLevel - h;
+        if(uw > 0.0){
+          float c = caustic(p*0.06, uTime*0.5) + 0.5*caustic(p*0.11 + 0.3, uTime*0.7);
+          lit += uSunColor * col * c * 0.9 * exp(-uw*0.3) * ndl * smoothstep(0.0, 0.4, uw);
+          lit *= exp(-uw * vec3(0.40, 0.085, 0.06) * (uUnder > 0.5 ? 0.45 : 1.0));
+        }
+        // 夜光：湿沙上被浪冲过后闪烁的蓝色光点
+        if(uBio > 0.001 && uRock < 0.5){
+          vec2 q = p * 5.0, cell = floor(q);
+          float dotm = smoothstep(0.3, 0.0, length(fract(q) - 0.5));
+          float band = wetness * (1.0 - smoothstep(0.0, 0.3, uw)) * smoothstep(uLevel - 0.25, uLevel + 0.05, h);
+          float sp = step(0.975, hash(cell)) * pow(0.5 + 0.5 * sin(uTime * (1.5 + 3.0 * hash(cell + 7.0)) + hash(cell + 3.1) * 40.0), 4.0);
+          lit += vec3(0.08, 0.7, 1.0) * sp * dotm * band * uBio * 2.0;
+        }
+        gl_FragColor = vec4(envFog(lit, vWorld), 1.0);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }`,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// 水体材质
+// ---------------------------------------------------------------------------
+function makeWaterMaterial(far) {
+  return new THREE.ShaderMaterial({
+    uniforms: { ...U, uFar: { value: far ? 1 : 0 } },
+    transparent: true,
+    side: THREE.DoubleSide,
+    vertexShader: GLSL_COMMON + /* glsl */`
+      uniform float uFar;
+      varying vec3 vWorld; varying float vWave;
+      void main(){
+        vec4 wp = modelMatrix * vec4(position, 1.0);
+        vec3 disp = vec3(0.0);
+        if(uFar < 0.5){
+          vec2 p = wp.xz;
+          float d = uLevel - terrainH(p);
+          float e = rectEdge(p);
+          vec3 T, B;
+          disp = gerstner(p, gerstnerMask(d) * e, T, B);
+          disp.y += surf(p, d).x * e;
+        }
+        vWave = disp.y;
+        wp.xyz += disp; wp.y += uLevel;
+        vWorld = wp.xyz;
+        gl_Position = projectionMatrix * viewMatrix * wp;
+      }`,
+    fragmentShader: GLSL_COMMON + /* glsl */`
+      uniform float uFar;
+      varying vec3 vWorld; varying float vWave;
+      float ripple(vec2 p){
+        return fbm(p*0.45 + vec2(uTime*0.25, -uTime*0.55)) + 0.6*fbm(p*1.4 - vec2(uTime*0.45, uTime*0.3));
+      }
+      void main(){
+        vec2 p = vWorld.xz;
+        bool isFar = uFar > 0.5;
+        if(isFar){
+          vec2 a = p - uRect.xy, b = uRect.xy + uRect.zw - p;
+          if(min(min(a.x, a.y), min(b.x, b.y)) > 6.0) discard;
+        }
+        float tH = isFar ? -40.0 : terrainH(p);
+        float d = uLevel - tH;          // 静水深
+        float wd = vWorld.y - tH;       // 实际水深
+        vec3 camV = cameraPosition - vWorld; float dist = length(camV); vec3 V = camV / dist;
+        float e = isFar ? 1.0 : rectEdge(p);
+
+        // 法线：Gerstner 解析导数 + 碎浪有限差分 + 细碎涟漪
+        vec3 T, B;
+        gerstner(p, gerstnerMask(d) * e, T, B);
+        vec3 Ng = normalize(cross(B, T));
+        vec2 grad = -Ng.xz / Ng.y;
+        float J = T.x * B.z - T.z * B.x;
+        vec2 sf = vec2(0.0);
+        if(!isFar){
+          float ee = 0.5;
+          sf = surf(p, d);
+          float hx = surf(p + vec2(ee, 0.0), uLevel - terrainH(p + vec2(ee, 0.0))).x;
+          float hz = surf(p + vec2(0.0, ee), uLevel - terrainH(p + vec2(0.0, ee))).x;
+          grad += e * vec2(hx - sf.x, hz - sf.x) / ee;
+        }
+        float detail = exp(-dist * 0.006) * 0.9;
+        if(detail > 0.02){
+          float r0 = ripple(p), ee = 0.12;
+          grad += detail * 0.12 * vec2(ripple(p + vec2(ee, 0.0)) - r0, ripple(p + vec2(0.0, ee)) - r0) / ee;
+        }
+        vec3 N = normalize(vec3(-grad.x, 1.0, -grad.y));
+
+        vec3 amb = textureLod(uEnv, vec3(0.0, 1.0, 0.0), 6.0).rgb;
+
+        // 泡沫
+        float fp = fbm(p*0.32 + vec2(uTime*0.10, uTime*0.35)) * 0.6 + fbm(p*1.25 - vec2(uTime*0.2, -uTime*0.5)) * 0.4;
+        float foamAmt = sf.y * e;
+        foamAmt += (1.0 - smoothstep(0.0, 0.15, wd)) * 0.6 * step(-1.5, d) * (isFar ? 0.0 : 1.0); // 水线
+        foamAmt += smoothstep(0.55, 0.12, J) * min(uWaveAmp, 1.5) * 0.7;                               // 白浪
+        foamAmt *= uFoam;
+        float foam = smoothstep(1.0 - foamAmt, 1.25 - foamAmt, fp) * smoothstep(-0.02, 0.03, wd);
+        vec3 foamCol = vec3(0.92, 0.95, 0.96) * (uSunColor * (max(dot(N, uSunDir), 0.0) * 0.6 + 0.15) + uMoonColor * (max(dot(N, uMoonDir), 0.0) * 0.8 + 0.25) + amb * 0.7);
+
+        // 夜光浪花：浪越翻滚越亮
+        vec3 bio = vec3(0.0);
+        if(uBio > 0.001){
+          float agit = sf.y * e * 1.3 + (1.0 - smoothstep(0.0, 0.3, wd)) * 0.7 * (isFar ? 0.0 : step(-1.5, d)) + smoothstep(0.55, 0.12, J) * 0.6;
+          float pat = smoothstep(0.45, 0.9, fp);
+          vec2 q = p * 2.5, cell = floor(q);
+          float hc = hash(cell);
+          float blink = step(0.88, fract(hc * 13.0 + uTime * (0.3 + hc)));
+          vec2 off = (vec2(hash(cell + 1.7), hash(cell + 4.1)) - 0.5) * 0.5;
+          float dotm = smoothstep(0.22, 0.0, length(fract(q) - 0.5 - off));
+          bio = vec3(0.04, 0.72, 1.0) * uBio * agit * (0.08 + 0.7 * pat + dotm * blink * 2.5) * 0.55;
+        }
+
+        vec3 col; float alpha;
+        if(gl_FrontFacing){
+          float NdV = max(dot(N, V), 0.0);
+          vec3 R = reflect(-V, N); R.y = abs(R.y) + 0.01;
+          vec3 refl = texture(uEnv, normalize(R)).rgb;
+          float fres = 0.02 + 0.98 * pow(1.0 - NdV, 5.0);
+          float depthMix = 1.0 - exp(-max(wd, 0.0) * 0.16);
+          vec3 body = mix(vec3(0.05, 0.36, 0.34), vec3(0.004, 0.035, 0.07), depthMix);
+          vec3 bodyLit = body * (amb * 0.6 + uSunColor * max(uSunDir.y, 0.0) * 0.35 + uMoonColor * max(uMoonDir.y, 0.0) * 0.35);
+          // 浪峰透光（次表面散射近似）
+          float sss = pow(max(dot(V, -uSunDir) * 0.5 + 0.5, 0.0), 3.0) * clamp(vWave * 0.4 + 0.15, 0.0, 1.0);
+          bodyLit += vec3(0.05, 0.42, 0.36) * uSunColor * sss * 0.35;
+          vec3 spec = uSunColor * (pow(max(dot(R, uSunDir), 0.0), 900.0) * 40.0 + pow(max(dot(R, uSunDir), 0.0), 60.0) * 0.4);
+          float rm = max(dot(R, uMoonDir), 0.0);
+          spec += uMoonColor * (pow(rm, 1400.0) * 70.0 + pow(rm, 90.0) * 1.6 + pow(rm, 12.0) * 0.08); // 月光碎金
+          // 船灯倒影
+          vec3 Ll = uLampPos - vWorld; float ld = length(Ll);
+          float rl = max(dot(R, Ll / ld), 0.0);
+          spec += uLampColor * (pow(rl, 600.0) * 60.0 + pow(rl, 50.0) * 0.8) / (1.0 + ld * ld * 0.002);
+          col = mix(bodyLit, refl, fres) + spec;
+          col = mix(col, foamCol, foam) + bio;
+          alpha = smoothstep(0.0, 0.1, wd) * clamp(0.3 + depthMix * 1.3 + fres, 0.0, 1.0);
+          alpha = max(alpha, max(foam, clamp(dot(bio, vec3(0.5)), 0.0, 1.0)));
+        } else {
+          // 水下仰视：斯涅尔窗（透出天空）+ 窗外全反射
+          vec3 I = -V, Nd = -N;
+          vec3 inside = uwFog(reflect(I, Nd)) * 1.1;
+          vec3 Tr = refract(I, Nd, 1.333);
+          if(dot(Tr, Tr) < 1e-4){
+            col = inside;
+          } else {
+            Tr = normalize(Tr);
+            float F = 0.02 + 0.98 * pow(1.0 - smoothstep(0.661, 1.0, max(dot(V, Nd), 0.0)), 4.0);
+            vec3 skyT = texture(uEnv, Tr).rgb
+              + uSunColor * pow(max(dot(Tr, uSunDir), 0.0), 400.0) * 12.0
+              + uMoonColor * pow(max(dot(Tr, uMoonDir), 0.0), 1500.0) * 60.0;
+            col = mix(skyT * vec3(0.42, 0.72, 0.78), inside, F);
+          }
+          col = mix(col, foamCol * 0.55, foam * 0.85) + bio * 0.5;
+          alpha = 1.0;
+        }
+        gl_FragColor = vec4(envFog(col, vWorld), alpha);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }`,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// 夜空：星空 / 银河 / 月亮（overlay 画在主场景，env 版本烘进立方体贴图供反射和雾）
+// ---------------------------------------------------------------------------
+const NU = {
+  uNight: { value: 0 }, uPhase: { value: 0.5 }, uStars: { value: 1 },
+  uMoonSize: { value: 0.022 }, uMoonDisc: { value: 2.5 },
+};
+function makeNightMaterial(overlay) {
+  return new THREE.ShaderMaterial({
+    uniforms: { ...U, ...NU },
+    defines: overlay ? { OVERLAY: 1 } : {},
+    side: THREE.BackSide, depthWrite: false, depthTest: !overlay ? false : true,
+    blending: THREE.AdditiveBlending, transparent: !overlay,
+    vertexShader: /* glsl */`
+      varying vec3 vDir;
+      void main(){ vDir = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+    fragmentShader: GLSL_COMMON + /* glsl */`
+      uniform float uNight, uPhase, uStars, uMoonSize, uMoonDisc;
+      varying vec3 vDir;
+      float h3(vec3 p){ return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
+      vec3 starLayer(vec3 D, float sc, float density){
+        vec3 p = D * sc, c = floor(p), f = fract(p);
+        float h = h3(c);
+        if(h < 1.0 - density) return vec3(0.0);
+        vec3 o = vec3(h3(c + 11.1), h3(c + 23.7), h3(c + 37.3)) * 0.6 + 0.2;
+        float d = length(f - o);
+        float b = pow((h - (1.0 - density)) / density, 3.0);
+        float tw = 0.65 + 0.35 * sin(uTime * (2.0 + 5.0 * h3(c + 3.3)) + h * 50.0);
+        vec3 tint = mix(vec3(0.7, 0.8, 1.0), vec3(1.0, 0.85, 0.7), h3(c + 5.5));
+        return tint * b * tw * exp(-d * d * 60.0) * 2.5;
+      }
+      void main(){
+        vec3 D = normalize(vDir);
+        vec3 M = uMoonDir;
+        float dm = dot(D, M);
+        vec3 col = vec3(0.0);
+      #ifdef OVERLAY
+        float above = smoothstep(-0.02, 0.15, D.y);
+        vec3 st = starLayer(D, 170.0, 0.06) + starLayer(D, 400.0, 0.05) * 0.6;
+        // 银河
+        vec3 gn = normalize(vec3(0.35, 0.55, 0.75));
+        float band = exp(-pow(dot(D, gn), 2.0) * 18.0);
+        float mw = band * (0.4 + 0.8 * fbm(D.xy * 7.0 + D.z * 3.0)) * (0.7 + 0.6 * fbm(D.zy * 18.0));
+        vec3 milky = vec3(0.55, 0.6, 0.8) * mw * 0.035;
+        float moonGlare = 1.0 - smoothstep(0.9, 0.999, dm) * 0.7;
+        col += (st + milky) * uStars * uNight * above * moonGlare;
+        // 月盘（带月相、月海）
+        if(dm > 0.0){
+          vec3 rt = normalize(cross(vec3(0.0, 1.0, 0.0), M));
+          vec3 up = cross(M, rt);
+          vec2 uv = vec2(dot(D, rt), dot(D, up)) / uMoonSize;
+          float rr = dot(uv, uv);
+          if(rr < 1.05){
+            vec3 n = vec3(uv, sqrt(max(1.0 - rr, 0.0)));
+            float th = uPhase * 6.28318;
+            vec3 L = vec3(sin(th), 0.0, -cos(th));
+            float lit = smoothstep(-0.04, 0.06, dot(n, L));
+            float maria = 1.0 - 0.38 * smoothstep(0.45, 0.72, fbm(uv * 1.8 + 4.0));
+            float crater = 1.0 - 0.12 * smoothstep(0.6, 0.9, vnoise(uv * 9.0));
+            float limb = 0.75 + 0.25 * n.z;
+            vec3 disc = vec3(1.0, 0.97, 0.9) * maria * crater * limb * (lit * uMoonDisc + 0.015);
+            float edge = 1.0 - smoothstep(0.96, 1.04, rr);
+            col = mix(col, disc, edge);
+          }
+        }
+      #else
+        float nightSky = uNight;
+        vec3 zen = vec3(0.0025, 0.005, 0.014), hor = vec3(0.009, 0.015, 0.03);
+        col = mix(hor, zen, pow(max(D.y, 0.0), 0.5)) * nightSky;
+        float g = max(dm, 0.0);
+        col += uMoonColor * (pow(g, 6.0) * 0.015 + pow(g, 80.0) * 0.12 + pow(g, 3000.0) * 3.0);
+      #endif
+        gl_FragColor = vec4(col, 1.0);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }`,
+  });
+}
+const nightEnv = new THREE.Mesh(new THREE.SphereGeometry(4000, 48, 24), makeNightMaterial(false));
+nightEnv.renderOrder = 1;
+skyScene.add(nightEnv);
+const nightDome = new THREE.Mesh(new THREE.SphereGeometry(15000, 96, 48), makeNightMaterial(true));
+nightDome.renderOrder = -10;
+nightDome.frustumCulled = false;
+scene.add(nightDome);
+
+// ---------------------------------------------------------------------------
+// 构建几何
+// ---------------------------------------------------------------------------
+function buildTerrain() {
+  const N = 512, cx = 0, cz = 100;
+  const warp = u => 380 * u + 1500 * Math.pow(u, 5);
+  const pos = new Float32Array((N + 1) * (N + 1) * 3);
+  let k = 0;
+  for (let j = 0; j <= N; j++) {
+    const z = cz + warp(j / N * 2 - 1);
+    for (let i = 0; i <= N; i++) {
+      const x = cx + warp(i / N * 2 - 1);
+      pos[k++] = x; pos[k++] = terrainH(x, z); pos[k++] = z;
+    }
+  }
+  const idx = new Uint32Array(N * N * 6);
+  k = 0;
+  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+    const a = j * (N + 1) + i, b = a + 1, c = a + N + 1, d = c + 1;
+    idx[k++] = a; idx[k++] = c; idx[k++] = b; idx[k++] = b; idx[k++] = c; idx[k++] = d;
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setIndex(new THREE.BufferAttribute(idx, 1));
+  g.computeVertexNormals();
+  return new THREE.Mesh(g, makeGroundMaterial(false));
+}
+
+const rockSpots = [];
+function buildRocks() {
+  const geo = new THREE.IcosahedronGeometry(1, 2);
+  const p = geo.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+    const n = 0.72 + 0.55 * fbm(x * 1.3 + 5, z * 1.3 + y * 0.9, 3);
+    p.setXYZ(i, x * n, y * n * 0.75, z * n);
+  }
+  geo.computeVertexNormals();
+  const COUNT = 260;
+  const mesh = new THREE.InstancedMesh(geo, makeGroundMaterial(true), COUNT);
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), sc = new THREE.Vector3(), v = new THREE.Vector3();
+  let n = 0, tries = 0;
+  let seed = 7;
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  while (n < COUNT && tries++ < 20000) {
+    const west = rnd() < 0.3;
+    const x = west ? -170 + (rnd() - 0.5) * 60 : 190 + (rnd() - 0.5) * 110;
+    const z = shoreZ(x) + (rnd() * 75 - 12);
+    const h = terrainH(x, z);
+    if (h < -3 || h > 5) continue;
+    const near = west ? Math.abs(x + 170) < 28 : Math.abs(x - 190) < 60;
+    if (!near) continue;
+    const s = 0.7 + Math.pow(rnd(), 2) * 3.5;
+    sc.set(s * (0.8 + rnd() * 0.6), s * (0.6 + rnd() * 0.6), s * (0.8 + rnd() * 0.6));
+    e.set(rnd() * 0.6, rnd() * Math.PI * 2, rnd() * 0.6);
+    q.setFromEuler(e);
+    v.set(x, h - s * 0.25, z);
+    m.compose(v, q, sc);
+    mesh.setMatrixAt(n++, m);
+    rockSpots.push({ x, z, h });
+  }
+  mesh.count = n;
+  return mesh;
+}
+
+function buildBirds() {
+  const group = new THREE.Group();
+  const wingGeo = new THREE.BufferGeometry();
+  wingGeo.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, -0.35, 0, 0, 0.35, 1.3, 0, -0.1], 3));
+  const mat = new THREE.MeshBasicMaterial({ color: 0x1b1f24, side: THREE.DoubleSide });
+  const birds = [];
+  for (let i = 0; i < 9; i++) {
+    const b = new THREE.Group();
+    const L = new THREE.Mesh(wingGeo, mat), R = new THREE.Mesh(wingGeo, mat);
+    R.scale.x = -1;
+    b.add(L, R);
+    b.userData = { L, R, r: 30 + Math.random() * 60, h: 18 + Math.random() * 20, sp: 0.08 + Math.random() * 0.06,
+                   ph: Math.random() * 6.28, cx: -40 + Math.random() * 120, cz: 30 + Math.random() * 60, fl: 5 + Math.random() * 3 };
+    group.add(b); birds.push(b);
+  }
+  group.userData.update = t => {
+    for (const b of birds) {
+      const u = b.userData, a = t * u.sp + u.ph;
+      b.position.set(u.cx + Math.cos(a) * u.r, u.h + Math.sin(t * 0.3 + u.ph) * 2, u.cz + Math.sin(a) * u.r);
+      b.rotation.y = -a;
+      const flap = Math.sin(t * u.fl + u.ph) * 0.5 * (Math.sin(t * 0.4 + u.ph) > -0.3 ? 1 : 0.1);
+      u.L.rotation.z = flap; u.R.rotation.z = -flap;
+    }
+  };
+  return group;
+}
+
+
+// ---------------------------------------------------------------------------
+// CPU 端海面高度（与着色器同一公式）：用于漂浮物、水下判定、礁石水花触发
+// ---------------------------------------------------------------------------
+const WAVES = [[62, 0.17, 0], [33, 0.15, 0.35], [19, 0.13, -0.45], [11, 0.11, 0.8], [6.5, 0.09, -1.0], [4.0, 0.07, 1.3]];
+const fract = x => x - Math.floor(x);
+function hashG(x, y) { // 与 GLSL hash() 相同
+  let a = fract(x * 0.1031), b = fract(y * 0.1031), c = fract(x * 0.1031);
+  const d = a * (b + 33.33) + b * (c + 33.33) + c * (a + 33.33);
+  a += d; b += d; c += d;
+  return fract((a + b) * c);
+}
+function vnoiseG(x, y) {
+  const ix = Math.floor(x), iy = Math.floor(y), fx = x - ix, fy = y - iy;
+  const ux = fx * fx * (3 - 2 * fx), uy = fy * fy * (3 - 2 * fy);
+  const a = hashG(ix, iy), b = hashG(ix + 1, iy), c = hashG(ix, iy + 1), d = hashG(ix + 1, iy + 1);
+  return (a + (b - a) * ux) * (1 - uy) + (c + (d - c) * ux) * uy;
+}
+const Wv = { t: 0, level: 0, amp: 1, dir: 0 };
+const _g = [0, 0, 0];
+function gerstnerJS(x, z, m, out) {
+  let dx = 0, dy = 0, dz = 0;
+  const Q = 1 / Math.max(Wv.amp, 1);
+  for (const [L, st, off] of WAVES) {
+    const k = 2 * Math.PI / L, a = st / k * Wv.amp * m, th = Wv.dir + off;
+    const ddx = Math.sin(th), ddz = -Math.cos(th);
+    const f = k * (ddx * x + ddz * z - Math.sqrt(9.8 / k) * Wv.t);
+    const cf = Math.cos(f);
+    dx += ddx * a * cf * Q; dy += a * Math.sin(f); dz += ddz * a * cf * Q;
+  }
+  out[0] = dx; out[1] = dy; out[2] = dz;
+  return out;
+}
+function surfPhase(x, z, d) {
+  const amp = Wv.amp, s = z - shoreZ(x);
+  const zone = (1 - smoothstep(2 * amp + 0.8, 3.5 * amp + 1.6, d)) * smoothstep(-1.1 * amp - 0.25, 0.2, d);
+  const cyc = (s * 0.11 + Wv.t * 0.72 + vnoiseG(x * 0.008, 3.1) * 5 + Math.sin(x * 0.004) * 2) / 6.28318;
+  return { u: fract(cyc), zone, setAmp: 0.55 + 0.6 * hashG(Math.floor(cyc), 7) };
+}
+function surfHeight(x, z, d) {
+  const { u, zone, setAmp } = surfPhase(x, z, d);
+  const b = Math.pow(1 - u, 2.3) * smoothstep(0, 0.045, u);
+  return Wv.amp * 0.75 * zone * (0.85 + 0.15 * smoothstep(-0.5, 2, d)) * setAmp * b;
+}
+const rectEdgeJS = (x, z) => smoothstep(0, 70, Math.min(x - RECT.x, RECT.x + RECT.w - x, RECT.z + RECT.h - z));
+function waterHeight(x, z) {
+  const d = Wv.level - terrainH(x, z);
+  const e = rectEdgeJS(x, z);
+  const m = smoothstep(0.6, 2.5 + 3 * Wv.amp, d) * e;
+  let px = x, pz = z;
+  for (let i = 0; i < 3; i++) { gerstnerJS(px, pz, m, _g); px = x - _g[0]; pz = z - _g[2]; } // 反解水平位移
+  return Wv.level + _g[1] + surfHeight(x, z, d) * e;
+}
+
+// ---------------------------------------------------------------------------
+// 漂浮物：渔船 / 浮标 / 漂流木
+// ---------------------------------------------------------------------------
+function makeObjMaterial(color, emissive = 0x000000) {
+  return new THREE.ShaderMaterial({
+    uniforms: { ...U, uColor: { value: new THREE.Color(color) }, uEmissive: { value: new THREE.Color(emissive) } },
+    vertexShader: /* glsl */`
+      varying vec3 vWorld; varying vec3 vN;
+      void main(){
+        vec4 wp = modelMatrix * vec4(position, 1.0);
+        vWorld = wp.xyz; vN = normalize(mat3(modelMatrix) * normal);
+        gl_Position = projectionMatrix * viewMatrix * wp;
+      }`,
+    fragmentShader: GLSL_COMMON + /* glsl */`
+      uniform vec3 uColor, uEmissive;
+      varying vec3 vWorld; varying vec3 vN;
+      void main(){
+        vec3 N = normalize(vN);
+        vec3 amb = textureLod(uEnv, N, 6.0).rgb;
+        vec3 Lv = uLampPos - vWorld; float l2 = dot(Lv, Lv);
+        vec3 lampT = uLampColor * max(dot(N, Lv * inversesqrt(l2)), 0.0) * 6.0 / (1.0 + l2);
+        vec3 lit = uColor * (uSunColor * max(dot(N, uSunDir), 0.0) + uMoonColor * max(dot(N, uMoonDir), 0.0) + amb * 0.6 + lampT);
+        float uw = uLevel - vWorld.y;
+        if(uw > 0.0) lit *= exp(-uw * vec3(0.40, 0.085, 0.06) * (uUnder > 0.5 ? 0.45 : 1.0));
+        lit += uEmissive;
+        gl_FragColor = vec4(envFog(lit, vWorld), 1.0);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }`,
+  });
+}
+let glowTex = null;
+function glowSprite(scale) {
+  if (!glowTex) {
+    const c = document.createElement('canvas'); c.width = c.height = 64;
+    const g = c.getContext('2d'), gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.18, 'rgba(255,255,255,0.45)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
+    glowTex = new THREE.CanvasTexture(c);
+  }
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0x000000, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }));
+  sp.scale.setScalar(scale);
+  return sp;
+}
+function buildBoat() {
+  const g = new THREE.Group();
+  const hullGeo = new THREE.BoxGeometry(2.4, 1.2, 7, 6, 4, 16);
+  const pa = hullGeo.attributes.position;
+  for (let i = 0; i < pa.count; i++) {
+    const x = pa.getX(i), y = pa.getY(i), z = pa.getZ(i);
+    const t = z / 3.5, yy = Math.max((y + 0.6) / 1.2, 0);
+    let w = t > 0 ? 1 - t * t * 0.9 : 1 - t * t * 0.18;   // 船艏收窄、船艉略收
+    w *= 0.3 + 0.7 * Math.sqrt(yy);                        // 船底收成 V 形
+    pa.setXYZ(i, x * w, y + (y > 0 ? 0.35 : 0.5) * Math.max(t, 0) ** 2, z); // 船艏上翘
+  }
+  hullGeo.computeVertexNormals();
+  const hull = new THREE.Mesh(hullGeo, makeObjMaterial(0xd9d4c7));
+  hull.position.y = 0.05;
+  const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.5, 1.0, 1.8), makeObjMaterial(0x2f5d7c));
+  cabin.position.set(0, 1.1, -0.9);
+  const roof = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.12, 2.1), makeObjMaterial(0xe9e6de));
+  roof.position.set(0, 1.66, -0.9);
+  const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.07, 4, 8), makeObjMaterial(0x6b5a45));
+  mast.position.set(0, 2.6, 0.9);
+  const lampMat = makeObjMaterial(0x333333);
+  const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.16, 12, 8), lampMat);
+  lamp.position.set(0, 4.5, 0.9);
+  const glow = glowSprite(5);
+  glow.position.copy(lamp.position);
+  g.add(hull, cabin, roof, mast, lamp, glow);
+  g.userData = { lampMat, glow, lamp };
+  return g;
+}
+function buildBuoy(color) {
+  const g = new THREE.Group();
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.45, 1.2, 14), makeObjMaterial(color));
+  const band = new THREE.Mesh(new THREE.CylinderGeometry(0.56, 0.56, 0.22, 14), makeObjMaterial(0xeeeeee));
+  band.position.y = 0.3;
+  const cone = new THREE.Mesh(new THREE.ConeGeometry(0.42, 0.9, 12), makeObjMaterial(color));
+  cone.position.y = 1.05;
+  const lampMat = makeObjMaterial(0x222222);
+  const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.11, 10, 6), lampMat);
+  lamp.position.y = 1.6;
+  const glow = glowSprite(2.4);
+  glow.position.y = 1.6;
+  g.add(body, band, cone, lamp, glow);
+  g.userData = { lampMat, glow, color: new THREE.Color(color) };
+  return g;
+}
+const floatGroup = new THREE.Group();
+const floaters = [];
+let boat;
+function addFloater(obj, x, z, yaw, L, W, opts = {}) {
+  floatGroup.add(obj);
+  floaters.push({ obj, x, z, s: z - shoreZ(x), yaw, baseYaw: yaw, L, W, y: Wv.level, pitch: 0, roll: 0, ...opts });
+}
+function buildFloaters() {
+  boat = buildBoat();
+  addFloater(boat, 120, 150, 0.6, 3.0, 1.0, { kind: 'boat' });
+  [[-130, 0xc8322b], [-50, 0x2e8b57], [30, 0xc8322b], [90, 0x2e8b57]].forEach(([x, c], i) =>
+    addFloater(buildBuoy(c), x, shoreZ(x) + 110, 0, 0.45, 0.45, { kind: 'buoy', blink: i * 0.9 }));
+  const logGeo = new THREE.CylinderGeometry(0.22, 0.28, 4, 10).rotateX(Math.PI / 2);
+  const logMat = makeObjMaterial(0x5a4632);
+  for (let i = 0; i < 6; i++) {
+    const x = -110 + i * 38 + Math.random() * 10;
+    addFloater(new THREE.Mesh(logGeo, logMat), x, shoreZ(x) + 78 + Math.random() * 20, Math.random() * Math.PI, 1.8, 0.25,
+      { kind: 'log', vx: 0.25 + Math.random() * 0.3 });
+  }
+  return floatGroup;
+}
+function updateFloaters(dt, t) {
+  for (const f of floaters) {
+    if (f.vx) { f.x += f.vx * dt; if (f.x > 140) f.x = -150; f.z = shoreZ(f.x) + f.s; }
+    if (f.kind === 'boat') f.yaw = f.baseYaw + 0.3 * Math.sin(t * 0.04);
+    if (f.kind === 'log') f.yaw += dt * 0.03;
+    const sy = Math.sin(f.yaw), cy = Math.cos(f.yaw);
+    const hf = waterHeight(f.x + sy * f.L, f.z + cy * f.L), ha = waterHeight(f.x - sy * f.L, f.z - cy * f.L);
+    const hs = waterHeight(f.x + cy * f.W, f.z - sy * f.W), hp = waterHeight(f.x - cy * f.W, f.z + sy * f.W);
+    const hc = waterHeight(f.x, f.z);
+    const k = Math.min(1, dt * (f.kind === 'buoy' ? 6 : 3));
+    f.y += ((hc * 2 + hf + ha + hs + hp) / 6 - f.y) * k;
+    f.pitch += (Math.atan2(hf - ha, 2 * f.L) - f.pitch) * k;
+    f.roll += (Math.atan2(hs - hp, 2 * f.W) - f.roll) * k;
+    f.obj.position.set(f.x, f.y, f.z);
+    f.obj.rotation.set(-f.pitch, f.yaw, f.roll, 'YXZ');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 礁石水花：浪头到达崖壁/礁石时触发粒子喷溅
+// ---------------------------------------------------------------------------
+const PX = { value: 1 }; // 粒子尺寸 → 像素 的换算
+const SPRAY_N = 4000;
+const spray = {
+  pos: new Float32Array(SPRAY_N * 3), vel: new Float32Array(SPRAY_N * 3), info: new Float32Array(SPRAY_N * 3),
+  age: new Float32Array(SPRAY_N).fill(1), life: new Float32Array(SPRAY_N).fill(1), next: 0, spots: [], geo: null,
+};
+function buildSpray() {
+  for (let i = 0; i < SPRAY_N; i++) spray.info[i * 3] = 1;
+  const spots = [];
+  const add = (x, z, h, ux, uz) => {
+    if (spots.some(p => (p.x - x) ** 2 + (p.z - z) ** 2 < 49)) return;
+    spots.push({ x, z, h, ux, uz, prevU: 0 });
+  };
+  const scan = (x0, x1, z0, z1) => {
+    for (let x = x0; x <= x1; x += 2) for (let z = z0; z <= z1; z += 2) {
+      const h = terrainH(x, z);
+      if (h < -1.2 || h > 1.6) continue;
+      const gx = (terrainH(x + 0.8, z) - terrainH(x - 0.8, z)) / 1.6, gz = (terrainH(x, z + 0.8) - terrainH(x, z - 0.8)) / 1.6;
+      const g = Math.hypot(gx, gz);
+      if (g > 0.22) add(x, z, h, gx / g, gz / g);
+    }
+  };
+  scan(120, 260, -20, 120);
+  scan(-200, -140, -20, 60);
+  for (const r of rockSpots) if (r.h > -1.2 && r.h < 1.0) add(r.x, r.z, r.h, 0, -1);
+  spray.spots = spots;
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(spray.pos, 3).setUsage(THREE.DynamicDrawUsage));
+  geo.setAttribute('aInfo', new THREE.BufferAttribute(spray.info, 3).setUsage(THREE.DynamicDrawUsage));
+  spray.geo = geo;
+  const mat = new THREE.ShaderMaterial({
+    uniforms: { ...U, uPx: PX },
+    transparent: true, depthWrite: false,
+    vertexShader: /* glsl */`
+      attribute vec3 aInfo; uniform float uPx;
+      varying vec3 vInfo; varying vec3 vWorld;
+      void main(){
+        vInfo = aInfo;
+        vec4 wp = modelMatrix * vec4(position, 1.0); vWorld = wp.xyz;
+        vec4 mv = viewMatrix * wp;
+        gl_Position = projectionMatrix * mv;
+        gl_PointSize = aInfo.x >= 1.0 ? 0.0 : clamp(aInfo.y * uPx / -mv.z, 1.0, 256.0);
+      }`,
+    fragmentShader: GLSL_COMMON + /* glsl */`
+      varying vec3 vInfo; varying vec3 vWorld;
+      void main(){
+        if(vInfo.x >= 1.0) discard;
+        vec2 c = gl_PointCoord * 2.0 - 1.0; float r = dot(c, c);
+        if(r > 1.0) discard;
+        bool mist = vInfo.z > 0.5;
+        float soft = mist ? pow(1.0 - r, 2.0) : smoothstep(1.0, 0.2, r);
+        float a = soft * (mist ? 0.26 : 0.9) * pow(1.0 - vInfo.x, 1.3) * smoothstep(0.0, 0.04, vInfo.x);
+        vec3 amb = textureLod(uEnv, vec3(0.0, 1.0, 0.0), 6.0).rgb;
+        vec3 col = vec3(0.95) * (uSunColor * (0.35 + 0.5 * max(uSunDir.y, 0.0)) + uMoonColor * 0.9 + amb * 0.9);
+        col += vec3(0.05, 0.7, 1.0) * uBio * (mist ? 0.4 : 1.2);
+        gl_FragColor = vec4(envFog(col, vWorld), a);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }`,
+  });
+  const pts = new THREE.Points(geo, mat);
+  pts.frustumCulled = false;
+  pts.renderOrder = 5;
+  return pts;
+}
+function burst(sp, strength) {
+  const n = Math.floor((40 + 150 * strength) * params.spray);
+  const P = spray.pos, V = spray.vel, amp = 0.6 + 0.4 * Math.min(Wv.amp, 2);
+  for (let i = 0; i < n; i++) {
+    const j = spray.next; spray.next = (j + 1) % SPRAY_N;
+    const mist = Math.random() < 0.3;
+    const a = Math.random() * Math.PI * 2, r = Math.random() * 1.8;
+    P[j * 3] = sp.x + Math.cos(a) * r; P[j * 3 + 1] = Wv.level + 0.1 + Math.random() * 0.4; P[j * 3 + 2] = sp.z + Math.sin(a) * r;
+    const up = (mist ? 2 + 4 * Math.random() : 4 + 11 * Math.sqrt(Math.random())) * (0.6 + 0.6 * strength) * amp;
+    const back = mist ? 0.8 : 1 + 1.5 * Math.random();           // 回落方向：朝向海面
+    const ra = Math.random() * Math.PI * 2, rr = Math.random() * (mist ? 1.5 : 2.2);
+    V[j * 3] = -sp.ux * back + Math.cos(ra) * rr; V[j * 3 + 1] = up; V[j * 3 + 2] = -sp.uz * back + Math.sin(ra) * rr;
+    spray.age[j] = 0;
+    spray.life[j] = mist ? 2.5 + 2 * Math.random() : 1.0 + 1.2 * Math.random();
+    spray.info[j * 3 + 1] = mist ? 1.6 + 2.4 * Math.random() : 0.2 + 0.35 * Math.random();
+    spray.info[j * 3 + 2] = mist ? 1 : 0;
+  }
+}
+function updateSpray(dt) {
+  if (params.spray > 0 && Wv.amp > 0.05) {
+    for (const sp of spray.spots) {
+      const d = Wv.level - sp.h;
+      if (d < -1.5 || d > 2.5) { sp.prevU = 0; continue; }
+      const { u, zone, setAmp } = surfPhase(sp.x, sp.z, d);
+      if (sp.prevU > 0.7 && u < 0.3 && zone > 0.04) burst(sp, Math.min(1.5, 0.3 + zone * setAmp * Wv.amp));
+      else if (Math.random() < dt * 0.05 * Wv.amp) burst(sp, 0.25 * Wv.amp);
+      sp.prevU = u;
+    }
+  }
+  const P = spray.pos, V = spray.vel, I = spray.info;
+  for (let i = 0; i < SPRAY_N; i++) {
+    if (spray.age[i] >= spray.life[i]) { I[i * 3] = 1; continue; }
+    spray.age[i] += dt;
+    const mist = I[i * 3 + 2] > 0.5;
+    V[i * 3 + 1] -= (mist ? 1.2 : 9.8) * dt;
+    const f = Math.max(0, 1 - (mist ? 1.6 : 0.25) * dt);
+    V[i * 3] *= f; V[i * 3 + 1] *= f; V[i * 3 + 2] *= f;
+    P[i * 3] += V[i * 3] * dt; P[i * 3 + 1] += V[i * 3 + 1] * dt; P[i * 3 + 2] += V[i * 3 + 2] * dt;
+    if (mist) I[i * 3 + 1] += dt * 0.8;
+    if (P[i * 3 + 1] < Wv.level - 0.4 && V[i * 3 + 1] < 0) spray.age[i] = spray.life[i];
+    I[i * 3] = Math.min(spray.age[i] / spray.life[i], 1);
+  }
+  spray.geo.attributes.position.needsUpdate = true;
+  spray.geo.attributes.aInfo.needsUpdate = true;
+}
+
+// ---------------------------------------------------------------------------
+// 水下粒子：气泡 / 悬浮微粒 / 夜光浮游生物（围绕相机循环）
+// ---------------------------------------------------------------------------
+function buildBubbles() {
+  const N = 1800;
+  const seed = new Float32Array(N * 3), kind = new Float32Array(N);
+  for (let i = 0; i < N * 3; i++) seed[i] = Math.random();
+  for (let i = 0; i < N; i++) kind[i] = Math.random();
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(seed, 3));
+  geo.setAttribute('aKind', new THREE.BufferAttribute(kind, 1));
+  const mat = new THREE.ShaderMaterial({
+    uniforms: { ...U, uPx: PX, uBox: { value: 18 } },
+    transparent: true, depthWrite: false,
+    vertexShader: /* glsl */`
+      attribute float aKind; uniform float uPx, uBox, uTime;
+      varying float vKind; varying vec3 vWorld; varying float vFade;
+      void main(){
+        float bubble = step(0.82, aKind);
+        vec3 p = position * uBox;
+        p.y += uTime * mix(0.04, 0.9 + 0.8 * fract(aKind * 37.0), bubble);
+        p.x += sin(uTime * (0.6 + aKind) + aKind * 50.0) * mix(0.15, 0.25, bubble);
+        p.z += cos(uTime * (0.5 + aKind) + aKind * 20.0) * 0.15;
+        p = mod(p - cameraPosition + uBox * 0.5, uBox) + cameraPosition - uBox * 0.5;
+        vWorld = p; vKind = aKind;
+        vFade = 1.0 - smoothstep(uBox * 0.3, uBox * 0.5, length(p - cameraPosition));
+        vec4 mv = viewMatrix * vec4(p, 1.0);
+        gl_Position = projectionMatrix * mv;
+        float size = bubble > 0.5 ? mix(0.03, 0.1, fract(aKind * 13.0)) : mix(0.015, 0.035, fract(aKind * 7.0));
+        gl_PointSize = clamp(size * uPx / -mv.z, 1.0, 64.0);
+      }`,
+    fragmentShader: GLSL_COMMON + /* glsl */`
+      varying float vKind; varying vec3 vWorld; varying float vFade;
+      void main(){
+        if(vWorld.y > uLevel - 0.15 || vWorld.y < terrainH(vWorld.xz)) discard;
+        vec2 c = gl_PointCoord * 2.0 - 1.0; float r = dot(c, c);
+        if(r > 1.0) discard;
+        vec3 amb = textureLod(uEnv, vec3(0.0, 1.0, 0.0), 6.0).rgb;
+        vec3 light = uSunColor * max(uSunDir.y, 0.0) * 0.6 + uMoonColor * 0.8 + amb * 0.6;
+        vec3 col; float a;
+        if(vKind > 0.82){
+          vec2 hl = c + vec2(0.35, 0.35);
+          float rim = smoothstep(0.55, 0.95, r) + 0.8 * smoothstep(0.15, 0.0, dot(hl, hl));
+          col = vec3(0.7, 0.9, 1.0) * light * 0.9; a = rim * 0.7;
+        } else {
+          col = vec3(0.6, 0.75, 0.7) * light * 0.25; a = (1.0 - r) * 0.5;
+          float tw = pow(0.5 + 0.5 * sin(uTime * (1.0 + 3.0 * fract(vKind * 91.0)) + vKind * 300.0), 6.0) * step(0.4, fract(vKind * 53.0));
+          col += vec3(0.05, 0.7, 1.0) * uBio * tw * 2.0;
+          a = max(a, (1.0 - r) * min(uBio, 1.0) * tw);
+        }
+        gl_FragColor = vec4(envFog(col, vWorld), a * vFade);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }`,
+  });
+  const pts = new THREE.Points(geo, mat);
+  pts.frustumCulled = false;
+  pts.renderOrder = 6;
+  pts.visible = false;
+  return pts;
+}
+
+// ---------------------------------------------------------------------------
+// 参数 / 太阳
+// ---------------------------------------------------------------------------
+const params = {
+  hour: 16.6, dayCycle: false, waveHeight: 1.0, waveDir: 8, foam: 1.0,
+  tideAuto: true, tideOffset: 0, timeScale: 1, exposure: 0.45, autoExposure: true,
+  moonPhase: 0.5, moonIntensity: 1.0, moonSize: 1.0, moonAuto: true, moonAz: 60, moonEl: 30, stars: 1.0,
+  bio: 1.0, spray: 1.0, floaters: true, boatLight: 1.0,
+};
+const PHASE_NAMES = ['新月', '蛾眉月', '上弦月', '盈凸月', '满月', '亏凸月', '下弦月', '残月'];
+const phaseName = p => PHASE_NAMES[Math.round(p * 8) % 8];
+
+// 天体方向：hour 为该天体的"本地时"，6 点东升(+x)，12 点在海面上方(+z)，18 点西落(-x)
+function celestialDir(hour, out) {
+  const t = (hour - 6) / 12;
+  const el = Math.sin(Math.PI * t) * 1.1 - 0.02;
+  const az = Math.PI * t;
+  return out.set(Math.cos(el) * Math.cos(az), Math.sin(el), Math.cos(el) * Math.sin(az)).normalize();
+}
+const sunDir = new THREE.Vector3(), moonDir = new THREE.Vector3();
+let skyKey = '', nightFactor = 0;
+function updateSky(force) {
+  const key = [params.hour, params.moonPhase, params.moonIntensity, params.moonAuto, params.moonAz, params.moonEl]
+    .map(v => typeof v === 'number' ? v.toFixed(2) : v).join('|');
+  if (!force && key === skyKey) return;
+  skyKey = key;
+
+  celestialDir(params.hour, sunDir);
+  sky.material.uniforms.sunPosition.value.copy(sunDir);
+  U.uSunDir.value.copy(sunDir);
+  const warm = smoothstep(0.0, 0.4, sunDir.y);
+  const vis = smoothstep(-0.03, 0.06, sunDir.y);
+  U.uSunColor.value.setRGB(1.0, 0.40 + 0.53 * warm, 0.16 + 0.68 * warm).multiplyScalar(2.3 * vis);
+
+  // 月亮：自动模式下按月相滞后于太阳（满月 = 与太阳相对）
+  if (params.moonAuto) {
+    let mh = params.hour - params.moonPhase * 24;
+    mh = ((mh % 24) + 24) % 24;
+    celestialDir(mh, moonDir);
+    params.moonEl = THREE.MathUtils.radToDeg(Math.asin(moonDir.y));
+    params.moonAz = (THREE.MathUtils.radToDeg(Math.atan2(moonDir.z, moonDir.x)) + 360) % 360;
+  } else {
+    const el = THREE.MathUtils.degToRad(params.moonEl), az = THREE.MathUtils.degToRad(params.moonAz);
+    moonDir.set(Math.cos(el) * Math.cos(az), Math.sin(el), Math.cos(el) * Math.sin(az));
+  }
+  U.uMoonDir.value.copy(moonDir);
+  const illum = (1 - Math.cos(params.moonPhase * Math.PI * 2)) / 2;
+  const mvis = smoothstep(-0.04, 0.08, moonDir.y);
+  nightFactor = smoothstep(0.08, -0.22, sunDir.y);
+  U.uMoonColor.value.setRGB(0.55, 0.66, 0.95).multiplyScalar(0.3 * params.moonIntensity * illum * mvis * (0.15 + 0.85 * nightFactor));
+  NU.uNight.value = nightFactor;
+  sky.material.uniforms.uSkyDim.value = 1 - 0.97 * smoothstep(-0.02, -0.25, sunDir.y);
+  NU.uPhase.value = params.moonPhase;
+  NU.uMoonDisc.value = 2.2 * (0.5 + 0.5 * params.moonIntensity) * (0.35 + 0.65 * nightFactor);
+  cubeCam.update(renderer, skyScene);
+}
+
+const presets = {
+  '沙滩': [[40, 7, -28], [-10, 1, 45]],
+  '碎浪区': [[-20, 3.5, 70], [10, 0, -5]],
+  '岩石岬角': [[95, 16, 110], [185, 6, 35]],
+  '高空俯瞰': [[-260, 150, -160], [40, 0, 80]],
+};
+// ---------------------------------------------------------------------------
+// 相机：环绕模式（OrbitControls）/ 自由视角（拖动环视 + WASD 漫游，可仰望天顶）
+// ---------------------------------------------------------------------------
+const cam = { mode: 'orbit' };
+const free = { yaw: 0, pitch: 0, keys: new Set(), drag: false, lx: 0, ly: 0 };
+const _v = new THREE.Vector3();
+function freeDir(out) {
+  const cp = Math.cos(free.pitch);
+  return out.set(Math.sin(free.yaw) * cp, Math.sin(free.pitch), Math.cos(free.yaw) * cp);
+}
+function lookFree(dir) {
+  free.yaw = Math.atan2(dir.x, dir.z);
+  free.pitch = Math.asin(THREE.MathUtils.clamp(dir.y, -1, 1));
+}
+function setCamMode(mode) {
+  cam.mode = mode;
+  const isFree = mode === 'free';
+  controls.enabled = !isFree;
+  if (isFree) {
+    camera.getWorldDirection(_v); lookFree(_v);
+  } else {
+    // 回到环绕：目标放在视线水平前方略低处，避免 OrbitControls 的俯仰限制造成跳变
+    freeDir(_v); _v.y = Math.min(_v.y, -0.15); _v.normalize();
+    controls.target.copy(camera.position).addScaledVector(_v, 40);
+    camera.fov = 55; camera.updateProjectionMatrix();
+    controls.update();
+  }
+  hintEl.textContent = isFree ? '拖动环视 · WASD 移动 · 空格/C 升降（可潜入水下）· Shift 加速 · 滚轮变焦 · F 切换模式' : 'F 切换到自由视角（可仰望天空）';
+}
+function goto(name) {
+  const [p, t] = presets[name];
+  camera.position.set(...p); controls.target.set(...t);
+  if (cam.mode === 'free') lookFree(_v.set(...t).sub(camera.position).normalize());
+  else controls.update();
+}
+const hintEl = document.getElementById('hint');
+const canvas = renderer.domElement;
+canvas.addEventListener('pointerdown', e => {
+  if (cam.mode !== 'free') return;
+  free.drag = true; free.lx = e.clientX; free.ly = e.clientY;
+  canvas.setPointerCapture(e.pointerId);
+});
+canvas.addEventListener('pointermove', e => {
+  if (!free.drag) return;
+  const k = 0.0035 * camera.fov / 55;
+  free.yaw += (e.clientX - free.lx) * k;   // "抓取"手感，与环绕模式一致
+  free.pitch = THREE.MathUtils.clamp(free.pitch + (e.clientY - free.ly) * k, -1.55, 1.55);
+  free.lx = e.clientX; free.ly = e.clientY;
+});
+const endDrag = () => { free.drag = false; };
+canvas.addEventListener('pointerup', endDrag);
+canvas.addEventListener('pointercancel', endDrag);
+canvas.addEventListener('wheel', e => {
+  if (cam.mode !== 'free') return;
+  e.preventDefault();
+  camera.fov = THREE.MathUtils.clamp(camera.fov + e.deltaY * 0.03, 12, 90);
+  camera.updateProjectionMatrix();
+}, { passive: false });
+const isTyping = e => /INPUT|TEXTAREA|SELECT/.test(e.target.tagName);
+addEventListener('keydown', e => {
+  if (isTyping(e)) return;
+  if (e.code === 'KeyF') { setCamMode(cam.mode === 'free' ? 'orbit' : 'free'); return; }
+  free.keys.add(e.code);
+  if (cam.mode === 'free' && e.code === 'Space') e.preventDefault();
+});
+addEventListener('keyup', e => free.keys.delete(e.code));
+addEventListener('blur', () => free.keys.clear());
+function updateFree(dt) {
+  const K = free.keys;
+  const speed = (K.has('ShiftLeft') || K.has('ShiftRight') ? 60 : 15) * dt;
+  const fx = Math.sin(free.yaw), fz = Math.cos(free.yaw);
+  let mx = 0, mz = 0, my = 0;
+  if (K.has('KeyW') || K.has('ArrowUp')) { mx += fx; mz += fz; }
+  if (K.has('KeyS') || K.has('ArrowDown')) { mx -= fx; mz -= fz; }
+  if (K.has('KeyD') || K.has('ArrowRight')) { mx -= fz; mz += fx; }
+  if (K.has('KeyA') || K.has('ArrowLeft')) { mx += fz; mz -= fx; }
+  if (K.has('Space') || K.has('KeyE')) my += 1;
+  if (K.has('KeyC') || K.has('KeyQ')) my -= 1;
+  camera.position.x += mx * speed; camera.position.z += mz * speed; camera.position.y += my * speed;
+}
+
+const gui = new GUI({ title: '海岸参数' });
+gui.add(params, 'hour', 0, 24, 0.05).name('时间 (时)').listen();
+gui.add(params, 'dayCycle').name('昼夜推进');
+gui.add(params, 'waveHeight', 0, 2, 0.01).name('浪高');
+gui.add(params, 'waveDir', -40, 40, 1).name('涌浪方向 (°)');
+gui.add(params, 'foam', 0, 2, 0.01).name('泡沫强度');
+gui.add(params, 'tideAuto').name('自动潮汐');
+gui.add(params, 'tideOffset', -1.5, 1.5, 0.01).name('潮位偏移 (m)');
+gui.add(params, 'timeScale', 0, 3, 0.01).name('时间流速');
+gui.add(params, 'exposure', 0.15, 1.2, 0.01).name('曝光');
+gui.add(params, 'autoExposure').name('夜间自动曝光');
+
+const moonFolder = gui.addFolder('月光与星空');
+moonFolder.add(params, 'moonPhase', 0, 1, 0.01).name('月相 (0新 · 0.5满)').listen();
+moonFolder.add(params, 'moonIntensity', 0, 3, 0.01).name('月光强度');
+moonFolder.add(params, 'moonSize', 0.4, 3, 0.01).name('月亮大小');
+moonFolder.add(params, 'stars', 0, 2.5, 0.01).name('星空亮度');
+moonFolder.add(params, 'moonAuto').name('自动月轨').onChange(v => { azCtl.enable(!v); elCtl.enable(!v); });
+const azCtl = moonFolder.add(params, 'moonAz', 0, 360, 1).name('月亮方位 (°)').listen().disable();
+const elCtl = moonFolder.add(params, 'moonEl', -10, 89, 0.5).name('月亮高度 (°)').listen().disable();
+
+const seaFolder = gui.addFolder('海洋');
+seaFolder.add(params, 'bio', 0, 3, 0.01).name('夜光浪花').listen();
+seaFolder.add(params, 'spray', 0, 2, 0.01).name('礁石水花');
+seaFolder.add(params, 'floaters').name('漂浮物').onChange(v => { floatGroup.visible = v; });
+seaFolder.add(params, 'boatLight', 0, 3, 0.01).name('船灯亮度');
+
+const camFolder = gui.addFolder('视角');
+camFolder.add(cam, 'mode', { '环绕': 'orbit', '自由视角（可仰视）': 'free' }).name('相机模式').listen().onChange(setCamMode);
+for (const k of Object.keys(presets)) camFolder.add({ [k]: () => goto(k) }, k);
+camFolder.add({ '月夜海面': () => {
+  Object.assign(params, { hour: 19.6, moonPhase: 0.5, moonAuto: true, dayCycle: false });
+  azCtl.disable(); elCtl.disable();
+  camera.position.set(-55, 5, -28); controls.target.set(-5, 20, 1);
+  if (cam.mode === 'free') lookFree(_v.set(-5, 20, 1).sub(camera.position).normalize()); else controls.update();
+} }, '月夜海面');
+camFolder.add({ '仰望星空': () => {
+  Object.assign(params, { hour: 22, moonPhase: 0.5, moonAuto: true, dayCycle: false });
+  azCtl.disable(); elCtl.disable();
+  updateSky(true);
+  setCamMode('free');
+  camera.position.set(-20, 2, -30);
+  const d = moonDir.clone(); d.y = 0; d.normalize();
+  free.yaw = Math.atan2(d.x, d.z) + 0.35;
+  free.pitch = Math.min(Math.asin(moonDir.y) - 0.12, 1.1);
+} }, '仰望星空');
+function shot(o) {
+  Object.assign(params, { hour: o.hour, dayCycle: false, moonAuto: true });
+  if (o.phase !== undefined) params.moonPhase = o.phase;
+  if (o.bio !== undefined) params.bio = o.bio;
+  azCtl.disable(); elCtl.disable();
+  updateSky(true);
+  if (o.free) {
+    setCamMode('free');
+    camera.position.set(...o.pos);
+    lookFree(_v.set(...o.look).sub(camera.position).normalize());
+  } else {
+    if (cam.mode === 'free') setCamMode('orbit');
+    camera.position.set(...o.pos); controls.target.set(...o.look); controls.update();
+  }
+}
+camFolder.add({ '潜入水下': () => shot({ hour: 11, free: true, pos: [20, -3.5, 125], look: [18, -1.2, 100] }) }, '潜入水下');
+camFolder.add({ '夜潜仰望': () => shot({ hour: 21.5, phase: 0.5, bio: 1.5, free: true, pos: [0, -2.2, 80], look: [0, 6, 72] }) }, '夜潜仰望');
+camFolder.add({ '夜光海滩': () => shot({ hour: 22, phase: 0.1, bio: 2, pos: [-25, 4, -14], look: [0, 0, 30] }) }, '夜光海滩');
+camFolder.add({ '渔船': () => shot({ hour: 17.3, pos: [95, 7, 128], look: [120, 1.5, 150] }) }, '渔船');
+
+// ---------------------------------------------------------------------------
+// 启动
+// ---------------------------------------------------------------------------
+const statsEl = document.getElementById('stats');
+let birds, sprayPts, bubbles;
+const uwBg = new THREE.Color(), _v2 = new THREE.Vector2();
+function init() {
+  U.uHeight.value = buildHeightTexture();
+  scene.add(buildTerrain());
+  scene.add(buildRocks());
+
+  const nearGeo = new THREE.PlaneGeometry(RECT.w, RECT.h, 640, 448);
+  nearGeo.rotateX(-Math.PI / 2);
+  nearGeo.translate(RECT.x + RECT.w / 2, 0, RECT.z + RECT.h / 2);
+  const near = new THREE.Mesh(nearGeo, makeWaterMaterial(false));
+  near.frustumCulled = false;
+  scene.add(near);
+
+  const farGeo = new THREE.PlaneGeometry(40000, 40000);
+  farGeo.rotateX(-Math.PI / 2);
+  farGeo.translate(0, -0.08, 0);
+  const far = new THREE.Mesh(farGeo, makeWaterMaterial(true));
+  far.renderOrder = -1;
+  scene.add(far);
+
+  birds = buildBirds();
+  scene.add(birds);
+  scene.add(buildFloaters());
+  sprayPts = buildSpray();
+  scene.add(sprayPts);
+  bubbles = buildBubbles();
+  scene.add(bubbles);
+
+  updateSky(true);
+  setCamMode('orbit');
+  const ld = document.getElementById('loading');
+  ld.style.opacity = 0; setTimeout(() => ld.remove(), 700);
+  renderer.setAnimationLoop(frame);
+}
+
+const clock = new THREE.Clock();
+let simT = 0, fpsAcc = 0, fpsN = 0, fps = 0;
+function frame() {
+  const dt = Math.min(clock.getDelta(), 0.1);
+  simT += dt * params.timeScale;
+  fpsAcc += dt; fpsN++;
+  if (fpsAcc > 0.5) { fps = fpsN / fpsAcc; fpsAcc = 0; fpsN = 0; }
+
+  if (params.dayCycle) {
+    params.hour += dt * params.timeScale * 0.05;
+    if (params.hour >= 24) params.hour -= 24;
+  }
+  updateSky();
+  NU.uStars.value = params.stars;
+  NU.uMoonSize.value = 0.022 * params.moonSize;
+  nightDome.position.copy(camera.position);
+  birds.visible = nightFactor < 0.6;
+  const tide = (params.tideAuto ? 0.55 * Math.sin(simT * Math.PI * 2 / 240) : 0) + params.tideOffset;
+  U.uTime.value = simT;
+  U.uLevel.value = tide;
+  U.uWaveAmp.value = params.waveHeight;
+  U.uWaveDir.value = THREE.MathUtils.degToRad(params.waveDir);
+  U.uFoam.value = params.foam;
+  renderer.toneMappingExposure = params.exposure * (params.autoExposure ? 1 + 2.4 * nightFactor : 1);
+
+  if (cam.mode === 'free') {
+    updateFree(dt);
+  } else {
+    controls.update();
+  }
+  Wv.t = simT; Wv.level = tide; Wv.amp = params.waveHeight; Wv.dir = U.uWaveDir.value;
+  const ground = terrainH(camera.position.x, camera.position.z);
+  const minY = cam.mode === 'free' ? ground + 0.6 : Math.max(ground + 1.2, tide + 1.5);
+  if (camera.position.y < minY) camera.position.y = minY;
+
+  // 水下判定
+  const surfY = waterHeight(camera.position.x, camera.position.z);
+  const under = camera.position.y < surfY - 0.05;
+  const camDepth = Math.max(0, surfY - camera.position.y);
+  U.uUnder.value = under ? 1 : 0;
+  U.uCamDepth.value = camDepth;
+  nightDome.visible = !under;
+  bubbles.visible = under;
+  if (under) {
+    const sc = U.uSunColor.value, mc = U.uMoonColor.value, k = Math.exp(-camDepth * 0.06);
+    const l = [0, 1, 2].map(i => ([sc.r, sc.g, sc.b][i] * Math.max(sunDir.y, 0) * 0.6 + [mc.r, mc.g, mc.b][i] * 0.9 + 0.2 * (1 - nightFactor) + 0.01) * k);
+    uwBg.setRGB(0.010 * l[0], 0.07 * l[1], 0.085 * l[2]);
+    scene.background = uwBg;
+  } else {
+    scene.background = cubeRT.texture;
+  }
+  U.uBio.value = params.bio * smoothstep(0.3, 0.9, nightFactor);
+  renderer.getDrawingBufferSize(_v2);
+  PX.value = _v2.y / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));
+
+  // 漂浮物与灯光
+  if (params.floaters) {
+    updateFloaters(dt, simT);
+    const night = smoothstep(0.25, 0.7, nightFactor);
+    const lampOn = night * params.boatLight;
+    boat.userData.lamp.getWorldPosition(U.uLampPos.value);
+    U.uLampColor.value.setRGB(1.0, 0.62, 0.3).multiplyScalar(lampOn);
+    boat.userData.lampMat.uniforms.uEmissive.value.setRGB(4, 2.5, 1.1).multiplyScalar(lampOn);
+    boat.userData.glow.material.color.setRGB(1.4, 0.85, 0.4).multiplyScalar(lampOn);
+    for (const f of floaters) {
+      if (f.kind !== 'buoy') continue;
+      const on = fract((simT + f.blink) / 4) < 0.12 ? night : 0;
+      f.obj.userData.lampMat.uniforms.uEmissive.value.copy(f.obj.userData.color).multiplyScalar(6 * on);
+      f.obj.userData.glow.material.color.copy(f.obj.userData.color).multiplyScalar(2 * on);
+    }
+  } else {
+    U.uLampColor.value.setRGB(0, 0, 0);
+  }
+  updateSpray(dt);
+
+  if (cam.mode === 'free') camera.lookAt(_v.copy(camera.position).add(freeDir(new THREE.Vector3())));
+  birds.userData.update(simT);
+  renderer.render(scene, camera);
+
+  const hh = Math.floor(params.hour), mm = Math.floor((params.hour - hh) * 60);
+  statsEl.textContent = `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')} · 潮位 ${tide >= 0 ? '+' : ''}${tide.toFixed(2)} m · ${phaseName(params.moonPhase)}${under ? ` · 水下 ${camDepth.toFixed(1)} m` : ''} · ${fps.toFixed(0)} FPS`;
+}
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+setTimeout(init, 30);
+</script>
+</body>
+</html>

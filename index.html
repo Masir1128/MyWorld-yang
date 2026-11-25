@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Science Sheep’s World · 科学羊的世界</title>
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<meta name="description" content="Explore Meadow Night: a quiet lakeside meadow with fireflies, snowy peaks and aurora. Walk, swim, and watch day turn into night — right in your browser.">
+<!-- 分享预览图必须是完整网址；以后换了域名，这里和 og:url 一起改 -->
+<meta property="og:title" content="Science Sheep’s World">
+<meta property="og:description" content="Explore Meadow Night — wander a lakeside meadow with fireflies, snowy peaks and aurora. Right in your browser.">
+<meta property="og:image" content="https://science-sheep-world.science-sheep-world-publish.workers.dev/assets/ch1-meadow.jpg">
+<meta property="og:url" content="https://science-sheep-world.science-sheep-world-publish.workers.dev/">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://science-sheep-world.science-sheep-world-publish.workers.dev/assets/ch1-meadow.jpg">
+<meta name="twitter:title" content="Science Sheep’s World">
+<meta name="twitter:description" content="Explore Meadow Night — wander a lakeside meadow with fireflies, snowy peaks and aurora. Right in your browser.">
+<style>
+  :root{--bg:#04060f;--ink:#e9eeff;--sub:rgba(220,230,255,.66);--line:rgba(160,190,255,.18);--card:rgba(12,18,40,.62);--accent:#8fd3ff;--gold:#f5bc68}
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--ink);font-family:"PingFang SC","Noto Sans SC","Microsoft YaHei",system-ui,-apple-system,sans-serif}
+  #sky{position:fixed;inset:0;width:100%;height:100%;z-index:0}
+  main{position:relative;z-index:1;max-width:1080px;margin:0 auto;padding:calc(28px + env(safe-area-inset-top)) 16px 64px}
+  header{display:flex;justify-content:space-between;align-items:center;gap:12px}
+  .logo{display:flex;align-items:center;gap:10px;font-size:15px;letter-spacing:.06em;color:var(--sub)}
+  .logo svg{flex:none}
+  #lang{font:inherit;font-size:13px;color:var(--ink);background:rgba(255,255,255,.06);border:1px solid var(--line);border-radius:999px;padding:6px 14px;cursor:pointer}
+  .hero{text-align:center;padding:72px 0 56px}
+  .hero h1{margin:0;font-size:clamp(34px,7vw,64px);font-weight:300;letter-spacing:.08em;line-height:1.15}
+  .hero .zh{margin-top:10px;font-size:clamp(15px,2.6vw,20px);letter-spacing:.5em;color:var(--sub);padding-left:.5em}
+  .hero p{max-width:620px;margin:22px auto 0;font-size:16px;line-height:1.8;color:var(--sub)}
+  .worlds .ch{display:grid;grid-template-columns:1.2fr 1fr}
+  .worlds .ch .img{aspect-ratio:auto;min-height:300px}
+  .worlds .ch .body{padding:28px;justify-content:center;gap:12px}
+  .worlds .ch h2{font-size:30px}
+  .worlds .ch .go{margin-top:8px}
+  @media (max-width:620px){ .worlds .ch{grid-template-columns:1fr} .worlds .ch .img{aspect-ratio:16/9;min-height:0} .worlds .ch .body{padding:20px} .worlds .ch h2{font-size:24px} }
+  .ch{position:relative;display:flex;flex-direction:column;border-radius:18px;overflow:hidden;background:var(--card);border:1px solid var(--line);backdrop-filter:blur(6px);text-decoration:none;color:inherit;transition:transform .25s,border-color .25s}
+  a.ch:hover{transform:translateY(-3px);border-color:rgba(143,211,255,.5)}
+  .ch .img{aspect-ratio:16/9;background-size:cover;background-position:center}
+  .ch .body{padding:18px 20px 20px;display:flex;flex-direction:column;gap:8px;flex:1}
+  .ch .no{font-size:12px;letter-spacing:.25em;color:var(--accent)}
+  .ch h2{margin:0;font-size:24px;font-weight:500;letter-spacing:.04em}
+  .ch p{margin:0;font-size:14.5px;line-height:1.7;color:var(--sub)}
+  .ch .learn{font-size:13px;color:rgba(230,238,255,.8)} .ch .learn b{color:var(--gold);font-weight:500}
+  .ch .go{margin-top:auto;padding-top:8px;font-size:15px;color:var(--accent)}
+  .ch .note{font-size:12px;color:rgba(220,230,255,.45)}
+  section.about{margin-top:56px;display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px}
+  .panel{padding:20px 22px;border-radius:16px;background:var(--card);border:1px solid var(--line);backdrop-filter:blur(6px)}
+  .panel h3{margin:0 0 10px;font-size:15px;letter-spacing:.2em;color:var(--accent);font-weight:500}
+  .panel p,.panel li{font-size:14px;line-height:1.75;color:var(--sub)}
+  .panel p{margin:6px 0} .panel ul{margin:6px 0;padding-left:1.2em}
+  .panel a{color:var(--accent)}
+  .links{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px}
+  .links a{font-size:14px;text-decoration:none;padding:7px 14px;border-radius:999px;border:1px solid rgba(143,211,255,.4);color:var(--ink)}
+  #pick{position:fixed;inset:0;z-index:20;display:none;align-items:center;justify-content:center;background:rgba(3,5,12,.82);backdrop-filter:blur(8px)}
+  #pick.open{display:flex}
+  #pick .box{text-align:center;padding:34px 28px;border-radius:20px;background:rgba(12,18,40,.85);border:1px solid var(--line);width:min(420px,88vw)}
+  #pick h2{margin:0 0 6px;font-weight:400;font-size:22px;letter-spacing:.06em}
+  #pick p{margin:0 0 22px;color:var(--sub);font-size:14px}
+  #pick button{display:block;width:100%;margin:10px 0;padding:14px;font:inherit;font-size:17px;letter-spacing:.1em;color:var(--ink);background:rgba(255,255,255,.05);border:1px solid rgba(143,211,255,.45);border-radius:12px;cursor:pointer}
+  #pick button:hover{background:rgba(143,211,255,.16)}
+  footer{margin-top:44px;text-align:center;font-size:12.5px;color:rgba(220,230,255,.4);line-height:1.8}
+  [data-zh]{display:none}
+  html[lang="zh-CN"] [data-en]{display:none} html[lang="zh-CN"] [data-zh]{display:revert}
+  @media (max-width:520px){ .hero .zh{letter-spacing:.18em;padding-left:.18em} .hero{padding:48px 0 36px} .hero p{font-size:15px} .ch h2{font-size:21px} }
+</style>
+</head>
+<body>
+<canvas id="sky"></canvas>
+<div id="pick"><div class="box">
+  <h2>选择语言 · Choose language</h2>
+  <p>以后可以随时在右上角切换 · You can switch anytime (top right)</p>
+  <button data-l="zh">中文</button>
+  <button data-l="en">English</button>
+</div></div>
+<main>
+  <header>
+    <div class="logo">
+      <svg width="30" height="30" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="17" r="11" fill="#f4f1e6"/><circle cx="9" cy="10" r="5" fill="#f4f1e6"/><circle cx="23" cy="10" r="5" fill="#f4f1e6"/><ellipse cx="16" cy="19" rx="6.5" ry="5.5" fill="#2a2f3a"/><circle cx="13.6" cy="18.4" r="1.1" fill="#fff"/><circle cx="18.4" cy="18.4" r="1.1" fill="#fff"/><circle cx="26" cy="5" r="1.4" fill="#f5bc68"/></svg>
+      <span data-en>Science Sheep’s World</span><span data-zh>科学羊的世界</span>
+    </div>
+    <button id="lang">中文</button>
+  </header>
+
+  <section class="hero">
+    <h1 data-en>Science Sheep’s World</h1><h1 data-zh>科学羊的世界</h1>
+    <div class="zh" data-en>科 学 羊 的 世 界</div><div class="zh" data-zh>SCIENCE SHEEP’S WORLD</div>
+    <p data-en>A book of worlds you can walk into, growing one world at a time. Beautiful first — with real science waiting inside. Runs right in your browser, nothing to install.</p>
+    <p data-zh>一本可以走进去的书，一个世界一个世界地往下写。先是好看，走进去以后，每一处都藏着真实的科学。打开浏览器就能玩，不用安装。</p>
+  </section>
+
+  <section class="worlds" aria-label="Meadow Night · 草原之夜">
+    <a class="ch lk" href="meadow/index.html">
+      <div class="img" style="background-image:url(assets/ch1-meadow.jpg)"></div>
+      <div class="body">
+        <h2 data-en>Meadow Night</h2><h2 data-zh>草原之夜</h2>
+        <p data-en>A quiet meadow by a lake: fireflies, snowy peaks, aurora and the Moon. Walk, swim, and dive into a hidden underwater garden of kelp, corals and a shipwreck.</p>
+        <p data-zh>湖边一片安静的草原：萤火虫、雪山、极光和月亮。散步、游泳，或潜入水潭，在海藻、珊瑚和沉船之间探索湖底花园。</p>
+        <div class="go" data-en>Enter →</div><div class="go" data-zh>进入 →</div>
+      </div>
+    </a>
+  </section>
+
+  <section class="about">
+    <div class="panel">
+      <h3 data-en>ABOUT</h3><h3 data-zh>关于</h3>
+      <p data-en>Made by <b>Science Sheep</b> — a solo developer and science writer, building this world one chapter at a time. Every chapter tries to be two things at once: a place worth visiting, and a place where you learn something true.</p>
+      <p data-zh>由 <b>科学羊</b> 一个人制作——一名独立开发者，也是科普作者，一章一章地把这个世界做下去。每一章都想同时做到两件事：值得去看看，也能让你学到真东西。</p>
+      <p data-en>Found a bug, a wrong fact, or have an idea? I read everything.</p>
+      <p data-zh>发现了问题、数据写错了，或者有新想法？每一条我都会看。</p>
+      <div class="links" id="contactLinks"></div>
+    </div>
+    <div class="panel">
+      <h3 data-en>CREDITS</h3><h3 data-zh>致谢与来源</h3>
+      <ul>
+        <li><span data-en>3D engine:</span><span data-zh>3D 引擎：</span> <a href="https://threejs.org" target="_blank" rel="noopener">three.js</a> (MIT)</li>
+        <li><span data-en>Knight character: KayKit Adventurers by Kay Lousberg (CC0)</span><span data-zh>骑士角色：KayKit Adventurers，作者 Kay Lousberg（CC0）</span></li>
+        <li><span data-en>Underwater garden: adapted from Abyssal Garden by Maksymilian Dendura</span><span data-zh>水下花园：移植自 Maksymilian Dendura 的 Abyssal Garden</span> (<a href="meadow/abyssal/LICENSE">MIT</a>)</li>
+      </ul>
+    </div>
+  </section>
+
+  <footer>
+    <div>© 2026 Science Sheep · 科学羊. <span data-en>All rights reserved.</span><span data-zh>保留所有权利。</span></div>
+    <div data-en>Best on a computer with headphones · works on phones too</div><div data-zh>电脑上戴耳机体验最好 · 手机也能玩</div>
+  </footer>
+</main>
+
+<script>
+// ---------------------------------------------------------------------------
+// 链接配置：填上就会显示，留空就不显示
+// ---------------------------------------------------------------------------
+var LINKS = {
+  twitter: '',   // 例如 'https://x.com/你的账号'
+  feedback: '',  // 反馈 / 投票表单，例如 Tally 或 Google 表单的链接
+  email: ''      // 例如 'hello@你的域名'
+};
+
+// 语言：和各章节共用同一个设置（ssw-lang）
+var lang = new URLSearchParams(location.search).get('lang'), saved = null;
+try { saved = localStorage.getItem('ssw-lang'); } catch (e) {}
+lang = lang || saved;
+var firstVisit = !lang;
+if (lang !== 'en' && lang !== 'zh') lang = /^zh/i.test(navigator.language || '') ? 'zh' : 'en';
+function applyLang() {
+  document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
+  document.getElementById('lang').textContent = lang === 'zh' ? 'English' : '中文';
+  document.title = lang === 'zh' ? '科学羊的世界 · Science Sheep’s World' : 'Science Sheep’s World · 科学羊的世界';
+  document.querySelectorAll('a.lk').forEach(function (a) {
+    var base = a.getAttribute('data-base') || a.getAttribute('href'); a.setAttribute('data-base', base);
+    a.href = base + (base.indexOf('?') >= 0 ? '&' : '?') + 'lang=' + lang;
+  });
+}
+document.getElementById('lang').onclick = function () {
+  lang = lang === 'zh' ? 'en' : 'zh';
+  try { localStorage.setItem('ssw-lang', lang); } catch (e) {}
+  applyLang();
+};
+applyLang();
+if (firstVisit) document.getElementById('pick').classList.add('open');
+document.querySelectorAll('#pick button').forEach(function (b) {
+  b.onclick = function () {
+    lang = b.dataset.l;
+    try { localStorage.setItem('ssw-lang', lang); } catch (e) {}
+    applyLang(); document.getElementById('pick').classList.remove('open');
+  };
+});
+
+function addLink(box, href, en, zh) {
+  var a = document.createElement('a'); a.href = href; a.target = '_blank'; a.rel = 'noopener';
+  a.innerHTML = '<span data-en>' + en + '</span><span data-zh>' + zh + '</span>';
+  document.getElementById(box).appendChild(a);
+}
+if (LINKS.feedback) addLink('contactLinks', LINKS.feedback, 'Send feedback', '提反馈');
+if (LINKS.twitter) addLink('contactLinks', LINKS.twitter, 'Follow on X', '关注 X 账号');
+if (LINKS.email) addLink('contactLinks', 'mailto:' + LINKS.email, 'Email', '发邮件');
+
+// 背景：缓慢闪烁的星空（很轻，不影响手机）
+(function () {
+  var c = document.getElementById('sky'), g = c.getContext('2d'), stars = [], dpr = Math.min(devicePixelRatio || 1, 2);
+  function resize() {
+    c.width = innerWidth * dpr; c.height = innerHeight * dpr; stars = [];
+    var n = Math.round(innerWidth * innerHeight / 2600);
+    for (var i = 0; i < n; i++) stars.push({ x: Math.random() * c.width, y: Math.random() * c.height, r: (Math.random() < 0.08 ? 1.6 : 0.8) * dpr * Math.random() + 0.3 * dpr, p: Math.random() * 6.3, s: 0.4 + Math.random() * 1.2 });
+  }
+  function draw(t) {
+    var grd = g.createRadialGradient(c.width * 0.5, c.height * 0.15, 0, c.width * 0.5, c.height * 0.15, c.height);
+    grd.addColorStop(0, '#0d1638'); grd.addColorStop(1, '#03050c');
+    g.fillStyle = grd; g.fillRect(0, 0, c.width, c.height);
+    for (var i = 0; i < stars.length; i++) {
+      var s = stars[i], a = 0.45 + 0.4 * Math.sin(t / 1000 * s.s + s.p);
+      g.globalAlpha = a; g.fillStyle = '#e8eeff'; g.beginPath(); g.arc(s.x, s.y, s.r, 0, 6.283); g.fill();
+    }
+    g.globalAlpha = 1;
+    requestAnimationFrame(draw);
+  }
+  addEventListener('resize', resize); resize(); requestAnimationFrame(draw);
+})();
+</script>
+</body>
+</html>
