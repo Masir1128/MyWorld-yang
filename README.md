@@ -6,6 +6,18 @@
 
 项目使用 Three.js / WebGL 渲染，HTML、CSS 与原生 JavaScript 构成交互界面，Web Audio 提供环境音与程序生成的音乐。无需安装游戏客户端，无需配置后端、数据库或 API Key。
 
+## 湖底花园的开源来源 · Underwater garden credits
+
+**湖底花园基于 [Abyssal Garden](https://github.com/Noniv/abyssal-garden) 的开源代码移植和改编，原作者为 Maksymilian Dendura（GitHub：[Noniv](https://github.com/Noniv)），原项目采用 MIT 许可。**
+
+我们复用了原项目的程序化建模与数学工具，以及合成水下音景代码，包括海藻分布、珊瑚、岩石、沉船、石鲸尾、鱼群和蝠鲼等生成逻辑。湖底花园的这些基础内容应归功于原作者。
+
+本项目在此基础上，将相关逻辑适配到草原现有的 **Three.js / WebGL** 场景，集成湖底布局、光照、实例化渲染、下潜和返回岸边交互、游泳与相机状态，以及共用音频上下文。原项目独立的 WebGPU 渲染器和页面导航没有直接搬入本项目。
+
+**The underwater garden is adapted from [Abyssal Garden](https://github.com/Noniv/abyssal-garden) by Maksymilian Dendura (Noniv), licensed under MIT.** Its procedural geometry, kelp distribution, math helpers and synthesized soundscape form the basis of the underwater experience. This project integrates and adapts that work into the meadow's Three.js / WebGL scene, with lake-specific placement, lighting, diving, swimming, camera and audio integration. Credit for the original underwater work belongs to its author.
+
+原始版权声明和 MIT 许可全文保留于 [`meadow/abyssal/LICENSE`](meadow/abyssal/LICENSE)。文件对应关系与改动说明见 [`meadow/abyssal/README.md`](meadow/abyssal/README.md) 和 [第三方说明](THIRD_PARTY_NOTICES.md)。本项目的自有内容声明不会替代或限制这部分上游代码及其改编代码的 MIT 许可。
+
 ![草原之夜](assets/ch1-meadow.jpg)
 
 ## 可以体验什么
@@ -135,7 +147,7 @@ zsh tools/build_site.sh
 
 ## 作者与许可
 
-作者：**科学羊 / Science Sheep** · GitHub：[@Masir1128](https://github.com/Masir1128)。
+项目制作与集成：**科学羊 / Science Sheep** · GitHub：[@Masir1128](https://github.com/Masir1128)。湖底花园的上游作品作者为 **Maksymilian Dendura / Noniv**，具体致谢见上方来源说明。
 
 仓库公开用于展示与交流。自有代码、文案、录音与视觉素材沿用页面中的「保留所有权利」声明，当前未额外授予通用开源许可；公开可见不代表可任意商业使用。
 
